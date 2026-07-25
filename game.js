@@ -69,35 +69,68 @@
   canvas.addEventListener('mousemove', onPointerMove);
   canvas.addEventListener('mouseup', onPointerUp);
 
-  // ---------- 星空背景 ----------
-  let stars = [];
-  function initStars() {
-    stars = [];
-    for (let i = 0; i < 80; i++) {
-      stars.push({
+  // ---------- 海中の背景（気泡・光の筋） ----------
+  let bubbles = [];
+  let lightShift = 0;
+
+  function initBubbles() {
+    bubbles = [];
+    for (let i = 0; i < 60; i++) {
+      bubbles.push({
         x: Math.random() * W,
         y: Math.random() * H,
-        speed: 30 + Math.random() * 90,
-        size: 1 + Math.random() * 2
+        speedX: 15 + Math.random() * 50,
+        speedY: 8 + Math.random() * 26,
+        size: 1.5 + Math.random() * 3.5,
+        alpha: 0.15 + Math.random() * 0.35
       });
     }
   }
 
-  function updateStars(dt) {
-    for (const s of stars) {
-      s.x -= s.speed * dt;
-      if (s.x < 0) {
-        s.x = W;
-        s.y = Math.random() * H;
+  function updateBubbles(dt) {
+    lightShift += dt * 18;
+    for (const b of bubbles) {
+      b.x -= b.speedX * dt;
+      b.y -= b.speedY * dt;
+      if (b.x < -10 || b.y < -10) {
+        b.x = Math.random() * W + W * 0.2;
+        b.y = H + Math.random() * 40;
       }
     }
   }
 
-  function drawStars() {
-    ctx.fillStyle = '#fff';
-    for (const s of stars) {
-      ctx.globalAlpha = 0.6;
-      ctx.fillRect(s.x, s.y, s.size, s.size);
+  function drawOceanBackground() {
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#0d5c78');
+    grad.addColorStop(0.55, '#0a3a52');
+    grad.addColorStop(1, '#031522');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 水面から差し込む光の筋
+    ctx.save();
+    ctx.globalAlpha = 0.07;
+    ctx.fillStyle = '#eafcff';
+    const rayGap = 220;
+    for (let x = -rayGap; x < W + rayGap; x += rayGap) {
+      const rayX = x - (lightShift % rayGap);
+      ctx.beginPath();
+      ctx.moveTo(rayX, 0);
+      ctx.lineTo(rayX + 60, 0);
+      ctx.lineTo(rayX - 40, H);
+      ctx.lineTo(rayX - 100, H);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 気泡
+    ctx.fillStyle = '#dff7ff';
+    for (const b of bubbles) {
+      ctx.globalAlpha = b.alpha;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -252,12 +285,12 @@
     enemyBullets = [];
     boss = null;
     spawnTimer = 0;
-    initStars();
+    initBubbles();
     resetPlayer();
   }
 
   function update(dt) {
-    updateStars(dt);
+    updateBubbles(dt);
 
     if (state !== STATE_PLAYING) return;
 
@@ -443,9 +476,7 @@
   }
 
   function render() {
-    ctx.fillStyle = '#05060f';
-    ctx.fillRect(0, 0, W, H);
-    drawStars();
+    drawOceanBackground();
 
     if (state === STATE_PLAYING) {
       drawEnemies();
@@ -486,7 +517,7 @@
     requestAnimationFrame(loop);
   }
 
-  initStars();
+  initBubbles();
   resetPlayer();
   requestAnimationFrame(loop);
 })();
