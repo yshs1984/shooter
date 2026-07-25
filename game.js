@@ -31,13 +31,16 @@
 
   // ---------- 入力 ----------
   let pointerActive = false;
+  let pointerX = null;
   let pointerY = null;
 
   function setPointerFromEvent(e) {
     const rect = canvas.getBoundingClientRect();
     if (e.touches && e.touches.length > 0) {
+      pointerX = e.touches[0].clientX - rect.left;
       pointerY = e.touches[0].clientY - rect.top;
     } else if (typeof e.clientY === 'number') {
+      pointerX = e.clientX - rect.left;
       pointerY = e.clientY - rect.top;
     }
   }
@@ -117,6 +120,9 @@
     player.invuln = 1.0;
     player.fireCooldown = 0;
   }
+
+  function playerMinX() { return player.size + 4; }
+  function playerMaxX() { return W * 0.6; }
 
   // ---------- 弾 ----------
   let playerBullets = [];
@@ -260,8 +266,10 @@
 
     if (pointerActive && pointerY !== null) {
       player.y += (pointerY - player.y) * Math.min(1, dt * 18);
+      player.x += (pointerX - player.x) * Math.min(1, dt * 18);
     }
     player.y = Math.max(player.size, Math.min(H - player.size, player.y));
+    player.x = Math.max(playerMinX(), Math.min(playerMaxX(), player.x));
 
     player.fireCooldown -= dt;
     if (player.fireCooldown <= 0) {
