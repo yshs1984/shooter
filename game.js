@@ -309,8 +309,8 @@
     return best;
   }
 
-  function spawnEnemyBullet(x, y, vx, vy) {
-    enemyBullets.push({ x, y, vx, vy, r: 5 });
+  function spawnEnemyBullet(x, y, vx, vy, opts) {
+    enemyBullets.push({ x, y, vx, vy, r: (opts && opts.r) || 5, lava: !!(opts && opts.lava) });
   }
 
   // ---------- 敵 ----------
@@ -322,10 +322,22 @@
     const r = Math.random();
     const y = 40 + Math.random() * (playH - 80);
     if (r < 0.4) {
-      enemies.push({
-        type: 'straight', x: W + 30, y, vx: -160, vy: 0,
-        r: 14, hp: 1, score: 10
-      });
+      // ピラニアは単体ではなく群れ（3匹）で出現する
+      const schoolSize = 3;
+      for (let i = 0; i < schoolSize; i++) {
+        const sy = y + (i - (schoolSize - 1) / 2) * 26;
+        const sx = W + 30 + i * 24;
+        enemies.push({
+          type: 'straight',
+          x: sx, baseX: sx,
+          y: sy, baseY: sy,
+          vx: -170, vy: 0,
+          t: Math.random() * Math.PI * 2,
+          xWobble: 10 + Math.random() * 8,
+          yWobble: 9 + Math.random() * 7,
+          r: 14, hp: 1, score: 10
+        });
+      }
     } else if (r < 0.75) {
       enemies.push({
         type: 'sine', x: W + 30, y, baseY: y, vx: -140,
@@ -342,7 +354,11 @@
 
   function updateEnemy(e, dt) {
     if (e.type === 'straight') {
-      e.x += e.vx * dt;
+      // 前後・上下に小さく揺れながら群れで泳ぐ
+      e.t += dt;
+      e.baseX += e.vx * dt;
+      e.x = e.baseX + Math.sin(e.t * 2.4) * e.xWobble;
+      e.y = e.baseY + Math.sin(e.t * 3.1) * e.yWobble;
     } else if (e.type === 'sine') {
       e.t += dt;
       e.x += e.vx * dt;
@@ -361,29 +377,81 @@
     }
   }
 
+  // ---------- 火山 ----------
+  let volcano = null;
+  let volcanoSpawned = false;
+  const VOLCANO_TRIGGER_KILLS = 10;
+
+  function spawnVolcano() {
+    volcano = {
+      x: W - 60,
+      y: playH - 16,
+      r: 34,
+      fireCooldown: 0.5
+    };
+  }
+
+  function updateVolcano(dt) {
+    if (!volcano) return;
+    volcano.fireCooldown -= dt;
+    if (volcano.fireCooldown <= 0) {
+      volcano.fireCooldown = 0.3 + Math.random() * 0.7;
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.95;
+      const speed = 190 + Math.random() * 230;
+      spawnEnemyBullet(
+        volcano.x, volcano.y - volcano.r * 1.5,
+        Math.cos(angle) * speed, Math.sin(angle) * speed,
+        { r: 8, lava: true }
+      );
+    }
+  }
+
   // ---------- ボス ----------
   let boss = null;
 
   function spawnBoss() {
     boss = {
       x: W - 140,
+      baseX: W - 140,
       y: playH / 2,
-      targetX: W - 140,
       r: 46,
       hp: 60,
       maxHp: 60,
       t: 0,
-      fireCooldown: 1.0
+      fireCooldown: 1.0,
+      lunging: false,
+      lungeT: 0,
+      lungeTimer: 2.5 + Math.random() * 1.5
     };
     enemies = [];
     enemyBullets = [];
+    volcano = null;
   }
 
   function updateBoss(dt) {
     if (!boss) return;
     boss.t += dt;
-    boss.x += (boss.targetX - boss.x) * Math.min(1, dt * 2);
     boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
+
+    // 前方への突進（ブロック崩しのボスが突っ込んでくる動きと同じ考え方）
+    if (boss.lunging) {
+      boss.lungeT += dt / 0.9;
+      if (boss.lungeT >= 1) {
+        boss.lunging = false;
+        boss.lungeT = 0;
+        boss.lungeTimer = 3.5 + Math.random() * 2.5;
+      }
+    } else {
+      boss.lungeTimer -= dt;
+      if (boss.lungeTimer <= 0) {
+        boss.lunging = true;
+        boss.lungeT = 0;
+      }
+    }
+    const lungeDepth = boss.baseX - 100;
+    const lungeOffset = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * lungeDepth : 0;
+    boss.x = boss.baseX - lungeOffset;
+
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
       boss.fireCooldown = 0.9;
@@ -466,6 +534,8 @@
     enemyBullets = [];
     items = [];
     boss = null;
+    volcano = null;
+    volcanoSpawned = false;
     spawnTimer = 0;
     initBubbles();
     resetPlayer();
@@ -533,6 +603,12 @@
       }
       for (const e of enemies) updateEnemy(e, dt);
       enemies = enemies.filter(e => e.x > -40);
+
+      if (!volcanoSpawned && killCount >= VOLCANO_TRIGGER_KILLS) {
+        volcanoSpawned = true;
+        spawnVolcano();
+      }
+      updateVolcano(dt);
 
       if (killCount >= BOSS_KILL_THRESHOLD) {
         spawnBoss();
@@ -1028,12 +1104,61 @@
       ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = '#ff5c5c';
     for (const b of enemyBullets) {
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-      ctx.fill();
+      if (b.lava) {
+        ctx.save();
+        ctx.shadowColor = '#ff8a1a';
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = '#ff8a1a';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffd68a';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = '#ff5c5c';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
+  }
+
+  function drawVolcano(v) {
+    ctx.save();
+    ctx.translate(v.x, v.y);
+    // 山体
+    ctx.fillStyle = '#3a2a22';
+    ctx.beginPath();
+    ctx.moveTo(-v.r * 1.6, 0);
+    ctx.lineTo(-v.r * 0.5, -v.r * 1.6);
+    ctx.lineTo(v.r * 0.5, -v.r * 1.6);
+    ctx.lineTo(v.r * 1.6, 0);
+    ctx.closePath();
+    ctx.fill();
+    // 溶岩の筋
+    ctx.strokeStyle = 'rgba(255,120,30,0.55)';
+    ctx.lineWidth = Math.max(2, v.r * 0.08);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-v.r * 0.15, -v.r * 1.4);
+    ctx.lineTo(-v.r * 0.5, 0);
+    ctx.moveTo(v.r * 0.2, -v.r * 1.3);
+    ctx.lineTo(v.r * 0.55, 0);
+    ctx.stroke();
+    // 火口の光（明滅）
+    const glow = 0.6 + 0.4 * Math.sin(Date.now() / 150);
+    ctx.shadowColor = '#ff8a1a';
+    ctx.shadowBlur = 16 + glow * 14;
+    ctx.fillStyle = `rgba(255,140,40,${glow})`;
+    ctx.beginPath();
+    ctx.ellipse(0, -v.r * 1.55, v.r * 0.45, v.r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   const ITEM_COLORS = {
@@ -1153,6 +1278,7 @@
     drawOceanBackground();
 
     if (state === STATE_PLAYING) {
+      if (volcano) drawVolcano(volcano);
       drawEnemies();
       drawItems();
       drawBoss();
