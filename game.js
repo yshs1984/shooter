@@ -43,6 +43,14 @@
   const activePointers = new Map();
   const MOUSE_ID = 'mouse';
 
+  const KEY_DIRECTIONS = {
+    ArrowUp: 'up', KeyW: 'up',
+    ArrowDown: 'down', KeyS: 'down',
+    ArrowLeft: 'left', KeyA: 'left',
+    ArrowRight: 'right', KeyD: 'right'
+  };
+  const keysActive = { up: false, down: false, left: false, right: false };
+
   function layoutButtons() {
     controlBarH = Math.max(120, Math.min(170, Math.round(H * 0.22)));
     playH = H - controlBarH;
@@ -76,6 +84,10 @@
       if (inRect(p.x, p.y, buttons.left)) controls.left = true;
       if (inRect(p.x, p.y, buttons.right)) controls.right = true;
     }
+    controls.up = controls.up || keysActive.up;
+    controls.down = controls.down || keysActive.down;
+    controls.left = controls.left || keysActive.left;
+    controls.right = controls.right || keysActive.right;
   }
 
   function maybeStartOrRestart() {
@@ -122,6 +134,28 @@
     recomputeControls();
   }
 
+  function onKeyDown(e) {
+    const dir = KEY_DIRECTIONS[e.code];
+    if (dir) {
+      e.preventDefault();
+      keysActive[dir] = true;
+      recomputeControls();
+      maybeStartOrRestart();
+      return;
+    }
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      maybeStartOrRestart();
+    }
+  }
+  function onKeyUp(e) {
+    const dir = KEY_DIRECTIONS[e.code];
+    if (dir) {
+      keysActive[dir] = false;
+      recomputeControls();
+    }
+  }
+
   canvas.addEventListener('touchstart', onTouchStart, { passive: false });
   canvas.addEventListener('touchmove', onTouchMove, { passive: false });
   canvas.addEventListener('touchend', onTouchEnd, { passive: false });
@@ -129,6 +163,8 @@
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
 
   // ---------- 海中の背景（気泡・光の筋） ----------
   let bubbles = [];
