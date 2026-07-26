@@ -624,14 +624,61 @@
     if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) return;
     ctx.save();
     ctx.translate(player.x, player.y);
-    ctx.fillStyle = '#4fd1ff';
+
+    const s = player.size;
+    const hullColor = '#4fd1ff';
+    const sailColor = '#2f9fd6';
+
+    // 船体（葉巻型、艦首は右向き）
+    ctx.fillStyle = hullColor;
     ctx.beginPath();
-    ctx.moveTo(player.size, 0);
-    ctx.lineTo(-player.size * 0.7, -player.size * 0.7);
-    ctx.lineTo(-player.size * 0.3, 0);
-    ctx.lineTo(-player.size * 0.7, player.size * 0.7);
+    ctx.ellipse(0, 0, s * 1.15, s * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 艦尾フィン（上下）
+    ctx.beginPath();
+    ctx.moveTo(-s * 1.05, -s * 0.15);
+    ctx.lineTo(-s * 1.55, -s * 0.55);
+    ctx.lineTo(-s * 0.85, -s * 0.05);
     ctx.closePath();
     ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-s * 1.05, s * 0.15);
+    ctx.lineTo(-s * 1.55, s * 0.55);
+    ctx.lineTo(-s * 0.85, s * 0.05);
+    ctx.closePath();
+    ctx.fill();
+
+    // 発射口（艦首の魚雷発射管。弾はplayer.x + player.sizeから出るため位置を合わせる）
+    ctx.fillStyle = sailColor;
+    roundRect(s * 0.85, -s * 0.2, s * 0.55, s * 0.4, 3);
+    ctx.fill();
+    ctx.fillStyle = '#0b2f42';
+    ctx.beginPath();
+    ctx.arc(s * 1.38, 0, s * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+
+    // セイル（司令塔）
+    ctx.fillStyle = sailColor;
+    roundRect(-s * 0.3, -s * 1.05, s * 0.55, s * 0.6, 4);
+    ctx.fill();
+
+    // 潜望鏡
+    ctx.strokeStyle = sailColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 1.05);
+    ctx.lineTo(0, -s * 1.32);
+    ctx.stroke();
+
+    // 舷窓
+    ctx.fillStyle = '#e8ffff';
+    for (const ox of [-s * 0.35, s * 0.1, s * 0.5]) {
+      ctx.beginPath();
+      ctx.arc(ox, 0, s * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.restore();
   }
 
@@ -657,11 +704,19 @@
     ctx.lineTo(e.r * 0.45, -e.r * 0.5);
     ctx.closePath();
     ctx.fill();
-    // 目
+    // 目（怒り）
     ctx.fillStyle = '#2a0410';
     ctx.beginPath();
     ctx.arc(-e.r * 0.45, -e.r * 0.12, e.r * 0.14, 0, Math.PI * 2);
     ctx.fill();
+    // 怒り眉（前方に向かって下がる）
+    ctx.strokeStyle = '#2a0410';
+    ctx.lineWidth = Math.max(2, e.r * 0.14);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-e.r * 0.18, -e.r * 0.48);
+    ctx.lineTo(-e.r * 0.65, -e.r * 0.26);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -676,6 +731,22 @@
     ctx.closePath();
     ctx.fill();
     ctx.globalAlpha = 1;
+    // 目（怒り、ドームの左寄り＝進行方向側）
+    ctx.fillStyle = '#5a3c00';
+    for (const ex of [-e.r * 0.5, -e.r * 0.05]) {
+      ctx.beginPath();
+      ctx.arc(ex, -e.r * 0.35, e.r * 0.11, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = '#5a3c00';
+    ctx.lineWidth = Math.max(2, e.r * 0.12);
+    ctx.lineCap = 'round';
+    for (const ex of [-e.r * 0.5, -e.r * 0.05]) {
+      ctx.beginPath();
+      ctx.moveTo(ex + e.r * 0.18, -e.r * 0.62);
+      ctx.lineTo(ex - e.r * 0.14, -e.r * 0.46);
+      ctx.stroke();
+    }
     // 触手（波打つ）
     ctx.strokeStyle = '#ffd24c';
     ctx.lineWidth = 2;
@@ -711,12 +782,20 @@
     ctx.beginPath();
     ctx.arc(0, 0, e.r * 0.95, 0, Math.PI * 2);
     ctx.fill();
-    // 目（発射直前は光る）
+    // 目（怒り、発射直前は光る）
     const aboutToFire = e.fireCooldown !== undefined && e.fireCooldown < 0.3;
     ctx.fillStyle = aboutToFire ? '#fff5cc' : '#2a1204';
     ctx.beginPath();
     ctx.arc(-e.r * 0.3, 0, e.r * 0.22, 0, Math.PI * 2);
     ctx.fill();
+    // 怒り眉
+    ctx.strokeStyle = '#2a1204';
+    ctx.lineWidth = Math.max(2, e.r * 0.16);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(e.r * 0.02, -e.r * 0.5);
+    ctx.lineTo(-e.r * 0.55, -e.r * 0.24);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -776,11 +855,19 @@
     ctx.arc(-boss.r * 1.1, -boss.r * 1.6, boss.r * 0.18, 0, Math.PI * 2);
     ctx.fill();
 
-    // 目
+    // 目（怒り）
     ctx.fillStyle = '#1a0424';
     ctx.beginPath();
     ctx.arc(-boss.r * 0.35, -boss.r * 0.15, boss.r * 0.12, 0, Math.PI * 2);
     ctx.fill();
+    // 怒り眉
+    ctx.strokeStyle = '#1a0424';
+    ctx.lineWidth = Math.max(3, boss.r * 0.09);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-boss.r * 0.16, -boss.r * 0.42);
+    ctx.lineTo(-boss.r * 0.55, -boss.r * 0.26);
+    ctx.stroke();
 
     ctx.restore();
 
