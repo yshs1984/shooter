@@ -635,21 +635,154 @@
     ctx.restore();
   }
 
+  function drawFishEnemy(e) {
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    ctx.fillStyle = '#ff5c7a';
+    // 尾びれ（進行方向の後ろ側）
+    ctx.beginPath();
+    ctx.moveTo(e.r * 0.6, 0);
+    ctx.lineTo(e.r * 1.6, -e.r * 0.7);
+    ctx.lineTo(e.r * 1.6, e.r * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    // 胴体
+    ctx.beginPath();
+    ctx.ellipse(0, 0, e.r, e.r * 0.62, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 背びれ
+    ctx.beginPath();
+    ctx.moveTo(-e.r * 0.1, -e.r * 0.55);
+    ctx.lineTo(e.r * 0.25, -e.r * 1.05);
+    ctx.lineTo(e.r * 0.45, -e.r * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    // 目
+    ctx.fillStyle = '#2a0410';
+    ctx.beginPath();
+    ctx.arc(-e.r * 0.45, -e.r * 0.12, e.r * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawJellyEnemy(e) {
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#ffd24c';
+    // 傘（ドーム）
+    ctx.beginPath();
+    ctx.arc(0, -e.r * 0.1, e.r, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // 触手（波打つ）
+    ctx.strokeStyle = '#ffd24c';
+    ctx.lineWidth = 2;
+    const t = e.t || 0;
+    for (let i = -2; i <= 2; i++) {
+      const baseX = i * e.r * 0.35;
+      const midX = baseX + Math.sin(t * 3 + i) * e.r * 0.25;
+      const endX = baseX + Math.sin(t * 3 + i + 1) * e.r * 0.35;
+      ctx.beginPath();
+      ctx.moveTo(baseX, -e.r * 0.1);
+      ctx.quadraticCurveTo(midX, e.r * 0.7, endX, e.r * 1.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawSpikyEnemy(e) {
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    ctx.fillStyle = '#ff8a4c';
+    // とげ
+    const spikes = 8;
+    ctx.beginPath();
+    for (let i = 0; i < spikes; i++) {
+      const a1 = (Math.PI * 2 * i) / spikes;
+      const a2 = a1 + Math.PI / spikes;
+      ctx.lineTo(Math.cos(a1) * e.r * 0.95, Math.sin(a1) * e.r * 0.95);
+      ctx.lineTo(Math.cos(a2) * e.r * 1.5, Math.sin(a2) * e.r * 1.5);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // 本体
+    ctx.beginPath();
+    ctx.arc(0, 0, e.r * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+    // 目（発射直前は光る）
+    const aboutToFire = e.fireCooldown !== undefined && e.fireCooldown < 0.3;
+    ctx.fillStyle = aboutToFire ? '#fff5cc' : '#2a1204';
+    ctx.beginPath();
+    ctx.arc(-e.r * 0.3, 0, e.r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawEnemies() {
     for (const e of enemies) {
-      ctx.fillStyle = e.type === 'shooter' ? '#ff8a4c' : (e.type === 'sine' ? '#ffd24c' : '#ff5c7a');
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-      ctx.fill();
+      if (e.type === 'sine') drawJellyEnemy(e);
+      else if (e.type === 'shooter') drawSpikyEnemy(e);
+      else drawFishEnemy(e);
     }
   }
 
   function drawBoss() {
     if (!boss) return;
+    ctx.save();
+    ctx.translate(boss.x, boss.y);
+
+    // 尾びれ
     ctx.fillStyle = '#c34cff';
     ctx.beginPath();
-    ctx.arc(boss.x, boss.y, boss.r, 0, Math.PI * 2);
+    ctx.moveTo(boss.r * 0.5, 0);
+    ctx.lineTo(boss.r * 1.5, -boss.r * 0.6);
+    ctx.lineTo(boss.r * 1.5, boss.r * 0.6);
+    ctx.closePath();
     ctx.fill();
+
+    // 胴体
+    ctx.beginPath();
+    ctx.ellipse(0, 0, boss.r, boss.r * 0.78, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 牙（ジグザグ）
+    ctx.fillStyle = '#fff';
+    const teeth = 6;
+    const jawY = boss.r * 0.35;
+    const jawW = boss.r * 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-jawW / 2, jawY);
+    for (let i = 0; i <= teeth; i++) {
+      const tx = -jawW / 2 + (jawW * i) / teeth;
+      const ty = jawY + (i % 2 === 0 ? boss.r * 0.22 : 0);
+      ctx.lineTo(tx, ty);
+    }
+    ctx.lineTo(jawW / 2, jawY);
+    ctx.closePath();
+    ctx.fill();
+
+    // ちょうちん（触角＋光る玉）
+    const glow = 0.6 + Math.sin(boss.t * 4) * 0.4;
+    ctx.strokeStyle = '#c34cff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-boss.r * 0.2, -boss.r * 0.7);
+    ctx.quadraticCurveTo(-boss.r * 0.7, -boss.r * 1.5, -boss.r * 1.1, -boss.r * 1.6);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(255,240,180,${glow})`;
+    ctx.beginPath();
+    ctx.arc(-boss.r * 1.1, -boss.r * 1.6, boss.r * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 目
+    ctx.fillStyle = '#1a0424';
+    ctx.beginPath();
+    ctx.arc(-boss.r * 0.35, -boss.r * 0.15, boss.r * 0.12, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
 
     const barW = Math.min(220, W - 140);
     const barX = W - barW - 16;
