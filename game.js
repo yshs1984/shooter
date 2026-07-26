@@ -202,14 +202,19 @@
     hp: 3,
     invuln: 0,
     fireCooldown: 0,
-    fireInterval: 0.22
+    fireInterval: 0.22,
+    bulletType: 'normal',
+    bulletTimer: 0
   };
+  const ITEM_POWER_DURATION = 12;
 
   function resetPlayer() {
     player.x = Math.max(60, W * 0.15);
     player.y = playH / 2;
     player.invuln = 1.0;
     player.fireCooldown = 0;
+    player.bulletType = 'normal';
+    player.bulletTimer = 0;
   }
 
   function playerMinX() { return player.size + 4; }
@@ -219,14 +224,40 @@
   let playerBullets = [];
   let enemyBullets = [];
 
+  const BULLET_SPEED = 620;
+
   function spawnPlayerBullet() {
-    playerBullets.push({
-      x: player.x + player.size,
-      y: player.y,
-      vx: 620,
-      vy: 0,
-      r: 4
-    });
+    const x = player.x + player.size;
+    const y = player.y;
+    if (player.bulletType === 'spread') {
+      const angles = [-0.28, 0, 0.28];
+      for (const a of angles) {
+        playerBullets.push({
+          x, y,
+          vx: Math.cos(a) * BULLET_SPEED,
+          vy: Math.sin(a) * BULLET_SPEED,
+          r: 4, type: 'spread'
+        });
+      }
+    } else if (player.bulletType === 'homing') {
+      playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 5, type: 'homing', homing: true });
+    } else {
+      playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 4, type: 'normal' });
+    }
+  }
+
+  function findNearestTarget(x, y) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const e of enemies) {
+      const d = dist(x, y, e.x, e.y);
+      if (d < bestDist) { bestDist = d; best = e; }
+    }
+    if (boss) {
+      const d = dist(x, y, boss.x, boss.y);
+      if (d < bestDist) { bestDist = d; best = boss; }
+    }
+    return best;
   }
 
   function spawnEnemyBullet(x, y, vx, vy) {
@@ -317,6 +348,30 @@
     }
   }
 
+  // ---------- アイテム ----------
+  let items = [];
+  const ITEM_DROP_CHANCE = 0.22;
+  const ITEM_TYPES = ['spread', 'homing'];
+
+  function spawnItem(x, y) {
+    const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+    items.push({ x, y, type, vx: -70, r: 12 });
+  }
+
+  function updateItems(dt) {
+    for (const it of items) it.x += it.vx * dt;
+    items = items.filter(it => it.x > -30);
+
+    for (const it of items) {
+      if (dist(it.x, it.y, player.x, player.y) < it.r + player.hitRadius) {
+        it.picked = true;
+        player.bulletType = it.type;
+        player.bulletTimer = ITEM_POWER_DURATION;
+      }
+    }
+    items = items.filter(it => !it.picked);
+  }
+
   // ---------- 衝突判定 ----------
   function dist(ax, ay, bx, by) {
     return Math.hypot(ax - bx, ay - by);
@@ -341,6 +396,7 @@
     enemies = [];
     playerBullets = [];
     enemyBullets = [];
+    items = [];
     boss = null;
     spawnTimer = 0;
     initBubbles();
@@ -354,6 +410,10 @@
 
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
+    if (player.bulletType !== 'normal') {
+      player.bulletTimer -= dt;
+      if (player.bulletTimer <= 0) player.bulletType = 'normal';
+    }
 
     const MOVE_SPEED = 260;
     let mvx = 0, mvy = 0;
@@ -375,8 +435,25 @@
       spawnPlayerBullet();
     }
 
-    for (const b of playerBullets) b.x += b.vx * dt;
-    playerBullets = playerBullets.filter(b => b.x < W + 20);
+    for (const b of playerBullets) {
+      if (b.homing) {
+        const target = findNearestTarget(b.x, b.y);
+        if (target) {
+          const desiredAngle = Math.atan2(target.y - b.y, target.x - b.x);
+          const curAngle = Math.atan2(b.vy, b.vx);
+          let diff = desiredAngle - curAngle;
+          diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+          const maxTurn = 6 * dt;
+          const newAngle = curAngle + Math.max(-maxTurn, Math.min(maxTurn, diff));
+          const speed = Math.hypot(b.vx, b.vy);
+          b.vx = Math.cos(newAngle) * speed;
+          b.vy = Math.sin(newAngle) * speed;
+        }
+      }
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+    }
+    playerBullets = playerBullets.filter(b => b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20);
 
     for (const b of enemyBullets) {
       b.x += b.vx * dt;
@@ -415,9 +492,11 @@
         e.dead = true;
         score += e.score;
         killCount += 1;
+        if (Math.random() < ITEM_DROP_CHANCE) spawnItem(e.x, e.y);
       }
     }
     enemies = enemies.filter(e => !e.dead);
+    updateItems(dt);
 
     // 自機弾 vs ボス
     if (boss) {
@@ -501,9 +580,11 @@
     ctx.fillRect(barX, barY, barW * (boss.hp / boss.maxHp), 10);
   }
 
+  const BULLET_COLORS = { normal: '#e8ffff', spread: '#8bffb0', homing: '#ff6fd8' };
+
   function drawBullets() {
-    ctx.fillStyle = '#e8ffff';
     for (const b of playerBullets) {
+      ctx.fillStyle = BULLET_COLORS[b.type] || BULLET_COLORS.normal;
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
@@ -513,6 +594,27 @@
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  const ITEM_LABELS = { spread: '3', homing: 'H' };
+
+  function drawItems() {
+    for (const it of items) {
+      ctx.save();
+      ctx.translate(it.x, it.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = BULLET_COLORS[it.type] || '#fff';
+      ctx.fillRect(-it.r, -it.r, it.r * 2, it.r * 2);
+      ctx.restore();
+
+      ctx.fillStyle = '#04202b';
+      ctx.font = `bold ${Math.round(it.r * 1.2)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ITEM_LABELS[it.type] || '?', it.x, it.y + 1);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
     }
   }
 
@@ -559,12 +661,18 @@
     drawButton(buttons.right, '▶', controls.right);
   }
 
+  const ITEM_NAMES = { spread: '3-WAY', homing: 'HOMING' };
+
   function drawHud() {
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.textBaseline = 'top';
     ctx.fillText(`SCORE ${score}`, 12, 12);
     ctx.fillText('LIFE ' + '♥'.repeat(Math.max(0, lives)), 12, 34);
+    if (player.bulletType !== 'normal') {
+      ctx.fillStyle = BULLET_COLORS[player.bulletType] || '#fff';
+      ctx.fillText(`${ITEM_NAMES[player.bulletType]} ${Math.ceil(player.bulletTimer)}s`, 12, 56);
+    }
   }
 
   function drawCenterText(lines) {
@@ -588,6 +696,7 @@
 
     if (state === STATE_PLAYING) {
       drawEnemies();
+      drawItems();
       drawBoss();
       drawBullets();
       drawPlayer();
