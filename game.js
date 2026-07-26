@@ -3,6 +3,8 @@
 
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
+  // パッチ番号(x)はこの変更をマージするPR番号に合わせる
+  const GAME_VERSION = 'v1.0.12';
 
   let W = 0, H = 0, DPR = 1, playH = 0, controlBarH = 0;
   function resize() {
@@ -707,6 +709,11 @@
         { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
         { text: 'タップでスタート', font: '18px sans-serif' }
       ]);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(GAME_VERSION, W / 2, H - 14);
+      ctx.textAlign = 'left';
     } else if (state === STATE_GAMEOVER) {
       drawCenterText([
         { text: 'GAME OVER', font: 'bold 26px sans-serif' },
