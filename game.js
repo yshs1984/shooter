@@ -3,7 +3,8 @@
 
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
-  const GAME_VERSION = 'v1.0.0';
+  // パッチ番号(x)はこの変更をマージするPR番号に合わせる
+  const GAME_VERSION = 'v1.0.12';
 
   let W = 0, H = 0, DPR = 1, playH = 0, controlBarH = 0;
   function resize() {
