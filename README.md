@@ -24,5 +24,6 @@
 
 - `index.html` — キャンバスとビューポート設定
 - `game.js` — ゲームロジック一式（入力・敵・弾・当たり判定・描画）
+- `version.js` — バージョン番号定義。PRの作成・更新のたびに GitHub Actions（`.github/workflows/version-bump.yml`）が自動で書き換える自動生成ファイルなので、手動編集しない
 
 ビルド不要。`index.html` を開くだけで動作します。
