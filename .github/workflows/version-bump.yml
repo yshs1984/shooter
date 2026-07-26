@@ -22,7 +22,7 @@ jobs:
         id: bump
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          sed -i -E "s/(window\.GAME_VERSION = 'v[0-9]+\.[0-9]+\.)[0-9]+(';)/\1${PR_NUMBER}\2/" version.js
+          sed -i -E "s/(window\.GAME_VERSION = 'v[0-9]+\.[0-9]+\.)[^']+(';)/\1${PR_NUMBER}\2/" version.js
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
