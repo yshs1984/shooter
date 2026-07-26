@@ -4,7 +4,7 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
-  let W = 0, H = 0, DPR = 1;
+  let W = 0, H = 0, DPR = 1, playH = 0, controlBarH = 0;
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth;
@@ -12,9 +12,9 @@
     canvas.width = Math.floor(W * DPR);
     canvas.height = Math.floor(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    layoutButtons();
   }
   window.addEventListener('resize', resize);
-  resize();
 
   // ---------- ゲーム状態 ----------
   const STATE_TITLE = 'title';
@@ -29,45 +29,103 @@
   let killCount = 0;
   const BOSS_KILL_THRESHOLD = 20;
 
-  // ---------- 入力 ----------
-  let pointerActive = false;
-  let pointerX = null;
-  let pointerY = null;
+  // ---------- 入力（画面下部の操作ボタン） ----------
+  const controls = { up: false, down: false, left: false, right: false };
+  const buttons = {
+    up: { x: 0, y: 0, w: 0, h: 0 },
+    down: { x: 0, y: 0, w: 0, h: 0 },
+    left: { x: 0, y: 0, w: 0, h: 0 },
+    right: { x: 0, y: 0, w: 0, h: 0 }
+  };
+  const activePointers = new Map();
+  const MOUSE_ID = 'mouse';
 
-  function setPointerFromEvent(e) {
+  function layoutButtons() {
+    controlBarH = Math.max(120, Math.min(170, Math.round(H * 0.22)));
+    playH = H - controlBarH;
+
+    const btn = Math.min(64, Math.round(controlBarH * 0.4));
+    const gap = 8;
+    const cell = btn + gap;
+    const padCX = 24 + cell * 1.5;
+    const padCY = playH + controlBarH / 2;
+
+    buttons.up = { x: padCX - btn / 2, y: padCY - cell, w: btn, h: btn };
+    buttons.down = { x: padCX - btn / 2, y: padCY + gap, w: btn, h: btn };
+    buttons.left = { x: padCX - cell - btn / 2, y: padCY - btn / 2, w: btn, h: btn };
+    buttons.right = { x: padCX + cell - btn / 2, y: padCY - btn / 2, w: btn, h: btn };
+  }
+
+  function localPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    if (e.touches && e.touches.length > 0) {
-      pointerX = e.touches[0].clientX - rect.left;
-      pointerY = e.touches[0].clientY - rect.top;
-    } else if (typeof e.clientY === 'number') {
-      pointerX = e.clientX - rect.left;
-      pointerY = e.clientY - rect.top;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  function inRect(px, py, r) {
+    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+  }
+
+  function recomputeControls() {
+    controls.up = controls.down = controls.left = controls.right = false;
+    for (const p of activePointers.values()) {
+      if (inRect(p.x, p.y, buttons.up)) controls.up = true;
+      if (inRect(p.x, p.y, buttons.down)) controls.down = true;
+      if (inRect(p.x, p.y, buttons.left)) controls.left = true;
+      if (inRect(p.x, p.y, buttons.right)) controls.right = true;
     }
   }
 
-  function onPointerDown(e) {
-    e.preventDefault();
-    pointerActive = true;
-    setPointerFromEvent(e);
+  function maybeStartOrRestart() {
     if (state === STATE_TITLE || state === STATE_GAMEOVER || state === STATE_CLEAR) {
       startGame();
     }
   }
-  function onPointerMove(e) {
-    if (!pointerActive) return;
+
+  function onTouchStart(e) {
     e.preventDefault();
-    setPointerFromEvent(e);
+    for (const t of e.changedTouches) {
+      activePointers.set(t.identifier, localPos(t.clientX, t.clientY));
+    }
+    recomputeControls();
+    maybeStartOrRestart();
   }
-  function onPointerUp(e) {
-    pointerActive = false;
+  function onTouchMove(e) {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (activePointers.has(t.identifier)) {
+        activePointers.set(t.identifier, localPos(t.clientX, t.clientY));
+      }
+    }
+    recomputeControls();
+  }
+  function onTouchEnd(e) {
+    e.preventDefault();
+    for (const t of e.changedTouches) activePointers.delete(t.identifier);
+    recomputeControls();
   }
 
-  canvas.addEventListener('touchstart', onPointerDown, { passive: false });
-  canvas.addEventListener('touchmove', onPointerMove, { passive: false });
-  canvas.addEventListener('touchend', onPointerUp, { passive: false });
-  canvas.addEventListener('mousedown', onPointerDown);
-  canvas.addEventListener('mousemove', onPointerMove);
-  canvas.addEventListener('mouseup', onPointerUp);
+  function onMouseDown(e) {
+    activePointers.set(MOUSE_ID, localPos(e.clientX, e.clientY));
+    recomputeControls();
+    maybeStartOrRestart();
+  }
+  function onMouseMove(e) {
+    if (!activePointers.has(MOUSE_ID)) return;
+    activePointers.set(MOUSE_ID, localPos(e.clientX, e.clientY));
+    recomputeControls();
+  }
+  function onMouseUp() {
+    activePointers.delete(MOUSE_ID);
+    recomputeControls();
+  }
+
+  canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+  canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+  canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+  canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mouseup', onMouseUp);
 
   // ---------- 海中の背景（気泡・光の筋） ----------
   let bubbles = [];
@@ -78,7 +136,7 @@
     for (let i = 0; i < 60; i++) {
       bubbles.push({
         x: Math.random() * W,
-        y: Math.random() * H,
+        y: Math.random() * playH,
         speedX: 15 + Math.random() * 50,
         speedY: 8 + Math.random() * 26,
         size: 1.5 + Math.random() * 3.5,
@@ -94,7 +152,7 @@
       b.y -= b.speedY * dt;
       if (b.x < -10 || b.y < -10) {
         b.x = Math.random() * W + W * 0.2;
-        b.y = H + Math.random() * 40;
+        b.y = playH + Math.random() * 40;
       }
     }
   }
@@ -149,7 +207,7 @@
 
   function resetPlayer() {
     player.x = Math.max(60, W * 0.15);
-    player.y = H / 2;
+    player.y = playH / 2;
     player.invuln = 1.0;
     player.fireCooldown = 0;
   }
@@ -182,7 +240,7 @@
 
   function spawnEnemy() {
     const r = Math.random();
-    const y = 40 + Math.random() * (H - 80);
+    const y = 40 + Math.random() * (playH - 80);
     if (r < 0.4) {
       enemies.push({
         type: 'straight', x: W + 30, y, vx: -160, vy: 0,
@@ -229,7 +287,7 @@
   function spawnBoss() {
     boss = {
       x: W - 140,
-      y: H / 2,
+      y: playH / 2,
       targetX: W - 140,
       r: 46,
       hp: 60,
@@ -245,7 +303,7 @@
     if (!boss) return;
     boss.t += dt;
     boss.x += (boss.targetX - boss.x) * Math.min(1, dt * 2);
-    boss.y = H / 2 + Math.sin(boss.t * 0.8) * (H * 0.28);
+    boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
       boss.fireCooldown = 0.9;
@@ -297,11 +355,18 @@
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
 
-    if (pointerActive && pointerY !== null) {
-      player.y += (pointerY - player.y) * Math.min(1, dt * 18);
-      player.x += (pointerX - player.x) * Math.min(1, dt * 18);
+    const MOVE_SPEED = 260;
+    let mvx = 0, mvy = 0;
+    if (controls.up) mvy -= 1;
+    if (controls.down) mvy += 1;
+    if (controls.left) mvx -= 1;
+    if (controls.right) mvx += 1;
+    if (mvx !== 0 || mvy !== 0) {
+      const len = Math.hypot(mvx, mvy);
+      player.x += (mvx / len) * MOVE_SPEED * dt;
+      player.y += (mvy / len) * MOVE_SPEED * dt;
     }
-    player.y = Math.max(player.size, Math.min(H - player.size, player.y));
+    player.y = Math.max(player.size, Math.min(playH - player.size, player.y));
     player.x = Math.max(playerMinX(), Math.min(playerMaxX(), player.x));
 
     player.fireCooldown -= dt;
@@ -317,7 +382,7 @@
       b.x += b.vx * dt;
       b.y += b.vy * dt;
     }
-    enemyBullets = enemyBullets.filter(b => b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < H + 20);
+    enemyBullets = enemyBullets.filter(b => b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20);
 
     if (!boss) {
       spawnTimer -= dt;
@@ -451,6 +516,49 @@
     }
   }
 
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawButton(r, glyph, active) {
+    ctx.fillStyle = active ? 'rgba(79,209,255,0.55)' : 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    roundRect(r.x, r.y, r.w, r.h, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = active ? '#04202b' : '#dff7ff';
+    ctx.font = `${Math.round(r.h * 0.45)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(glyph, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  function drawControls() {
+    ctx.fillStyle = '#03141d';
+    ctx.fillRect(0, playH, W, controlBarH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, playH + 0.5);
+    ctx.lineTo(W, playH + 0.5);
+    ctx.stroke();
+
+    drawButton(buttons.up, '▲', controls.up);
+    drawButton(buttons.down, '▼', controls.down);
+    drawButton(buttons.left, '◀', controls.left);
+    drawButton(buttons.right, '▶', controls.right);
+  }
+
   function drawHud() {
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
@@ -484,6 +592,7 @@
       drawBullets();
       drawPlayer();
       drawHud();
+      drawControls();
     } else if (state === STATE_TITLE) {
       drawCenterText([
         { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
@@ -517,6 +626,7 @@
     requestAnimationFrame(loop);
   }
 
+  resize();
   initBubbles();
   resetPlayer();
   requestAnimationFrame(loop);
