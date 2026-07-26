@@ -205,10 +205,8 @@
     invuln: 0,
     fireCooldown: 0,
     fireInterval: 0.22,
-    bulletType: 'normal',
-    bulletTimer: 0
+    bulletType: 'normal'
   };
-  const ITEM_POWER_DURATION = 12;
 
   function resetPlayer() {
     player.x = Math.max(60, W * 0.15);
@@ -216,7 +214,6 @@
     player.invuln = 1.0;
     player.fireCooldown = 0;
     player.bulletType = 'normal';
-    player.bulletTimer = 0;
   }
 
   function playerMinX() { return player.size + 4; }
@@ -368,7 +365,6 @@
       if (dist(it.x, it.y, player.x, player.y) < it.r + player.hitRadius) {
         it.picked = true;
         player.bulletType = it.type;
-        player.bulletTimer = ITEM_POWER_DURATION;
       }
     }
     items = items.filter(it => !it.picked);
@@ -412,10 +408,6 @@
 
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
-    if (player.bulletType !== 'normal') {
-      player.bulletTimer -= dt;
-      if (player.bulletTimer <= 0) player.bulletType = 'normal';
-    }
 
     const MOVE_SPEED = 260;
     let mvx = 0, mvy = 0;
@@ -673,7 +665,7 @@
     ctx.fillText('LIFE ' + '♥'.repeat(Math.max(0, lives)), 12, 34);
     if (player.bulletType !== 'normal') {
       ctx.fillStyle = BULLET_COLORS[player.bulletType] || '#fff';
-      ctx.fillText(`${ITEM_NAMES[player.bulletType]} ${Math.ceil(player.bulletTimer)}s`, 12, 56);
+      ctx.fillText(ITEM_NAMES[player.bulletType], 12, 56);
     }
   }
 
