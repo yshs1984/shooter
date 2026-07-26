@@ -682,11 +682,69 @@
     ctx.restore();
   }
 
+  // 赤く光る丸い目。暗い眼窩に浮かぶ残り火のような見え方にする
+  function drawEvilEye(x, y, radius, color, glow) {
+    ctx.save();
+    // 眼窩の影
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 1.7, 0, Math.PI * 2);
+    ctx.fill();
+    // 発光する眼球
+    ctx.shadowColor = color;
+    ctx.shadowBlur = glow;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fill();
+    // 白熱した中心
+    ctx.shadowBlur = glow * 0.5;
+    ctx.fillStyle = '#ffd9d9';
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 三角の吊り目。後方が高く、前方へ鋭く落ちてにらみつける形
+  // （ブロック崩しのボスと同じ形状。scaleで大きさを合わせる）
+  const GLARE_EYE_PTS = [[14, -9], [-12, 1], [10, 5]];
+  const GLARE_EYE_CENTER = [4, -1]; // 重心。ここを基準に拡大して眼窩を作る
+
+  function traceGlareTriangle(x, y, scale, expand) {
+    const [cx, cy] = GLARE_EYE_CENTER;
+    ctx.beginPath();
+    GLARE_EYE_PTS.forEach(([px, py], i) => {
+      const ex = x + (cx + (px - cx) * expand) * scale;
+      const ey = y + (cy + (py - cy) * expand) * scale;
+      if (i === 0) ctx.moveTo(ex, ey);
+      else ctx.lineTo(ex, ey);
+    });
+    ctx.closePath();
+  }
+
+  function drawTriangleGlareEye(x, y, scale, color, glow) {
+    ctx.save();
+    // 薄い眼窩の影（目と相似の三角形をひと回り大きく）
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    traceGlareTriangle(x, y, scale, 1.4);
+    ctx.fill();
+    // 発光する三角の目
+    ctx.shadowColor = color;
+    ctx.shadowBlur = glow;
+    ctx.fillStyle = color;
+    traceGlareTriangle(x, y, scale, 1);
+    ctx.fill();
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawFishEnemy(e) {
     const r = e.r;
     ctx.save();
     ctx.translate(e.x, e.y);
-    ctx.fillStyle = '#c92a4e';
+    ctx.fillStyle = '#8e1b34';
     // 尾びれ（切れ込みの入った鋭角）
     ctx.beginPath();
     ctx.moveTo(r * 0.5, 0);
@@ -730,23 +788,16 @@
       ctx.closePath();
       ctx.fill();
     }
-    // 目（白目＋小さい瞳＝鋭い目つき）
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(-r * 0.38, -r * 0.28, r * 0.17, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#12020a';
-    ctx.beginPath();
-    ctx.arc(-r * 0.44, -r * 0.25, r * 0.08, 0, Math.PI * 2);
-    ctx.fill();
-    // 太い怒り眉（目に食い込む）
-    ctx.strokeStyle = '#12020a';
-    ctx.lineWidth = Math.max(2.5, r * 0.18);
+    // 体の傷跡
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = Math.max(1.5, r * 0.09);
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(-r * 0.08, -r * 0.6);
-    ctx.lineTo(-r * 0.62, -r * 0.32);
+    ctx.moveTo(r * 0.1, -r * 0.32);
+    ctx.lineTo(r * 0.38, r * 0.1);
     ctx.stroke();
+    // 赤く光る目
+    drawEvilEye(-r * 0.42, -r * 0.26, r * 0.17, '#ff2020', r * 0.8);
     ctx.restore();
   }
 
@@ -756,7 +807,7 @@
     ctx.translate(e.x, e.y);
     // 傘（ドーム＋ギザギザの裾＝毒クラゲ風）
     ctx.globalAlpha = 0.92;
-    ctx.fillStyle = '#caa218';
+    ctx.fillStyle = '#6e5f12';
     ctx.beginPath();
     ctx.arc(0, -r * 0.15, r, Math.PI, 0);
     const teethN = 5;
@@ -768,19 +819,12 @@
     ctx.closePath();
     ctx.fill();
     ctx.globalAlpha = 1;
-    // 目（細く光る吊り目）
-    ctx.fillStyle = '#ff3b3b';
-    for (const ex of [-r * 0.5, -r * 0.02]) {
-      ctx.save();
-      ctx.translate(ex, -r * 0.4);
-      ctx.rotate(-0.35);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.22, r * 0.07, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+    // 赤く光る一対の目
+    for (const ex of [-r * 0.45, r * 0.05]) {
+      drawEvilEye(ex, -r * 0.42, r * 0.15, '#ff2020', r * 0.7);
     }
     // 触手（波打つ、先が尖って見えるよう細めに）
-    ctx.strokeStyle = '#caa218';
+    ctx.strokeStyle = '#6e5f12';
     ctx.lineWidth = 2;
     const t = e.t || 0;
     for (let i = -2; i <= 2; i++) {
@@ -799,7 +843,7 @@
     const r = e.r;
     ctx.save();
     ctx.translate(e.x, e.y);
-    ctx.fillStyle = '#e0672a';
+    ctx.fillStyle = '#8f3d16';
     // とげ（細長い針）
     const spikes = 10;
     for (let i = 0; i < spikes; i++) {
@@ -829,26 +873,18 @@
       ctx.closePath();
       ctx.fill();
     }
-    // 目（白目＋小さい瞳。発射直前は赤く光る）
+    // 赤く光る3つの目（単眼を下に置くと鼻に見えるので、単眼は上・対の目は下に配置）
     const aboutToFire = e.fireCooldown !== undefined && e.fireCooldown < 0.3;
-    ctx.fillStyle = aboutToFire ? '#ff3b3b' : '#fff';
-    ctx.beginPath();
-    ctx.arc(-r * 0.32, -r * 0.15, r * 0.22, 0, Math.PI * 2);
-    ctx.fill();
-    if (!aboutToFire) {
-      ctx.fillStyle = '#1c0a00';
-      ctx.beginPath();
-      ctx.arc(-r * 0.4, -r * 0.12, r * 0.1, 0, Math.PI * 2);
-      ctx.fill();
+    const eyeColor = aboutToFire ? '#ff5a2a' : '#ff2020';
+    const eyeGlow = aboutToFire ? r * 1.4 : r * 0.7;
+    const eyePositions = [
+      [-r * 0.22, -r * 0.46],
+      [-r * 0.48, -r * 0.12],
+      [r * 0.02, -r * 0.16]
+    ];
+    for (const [ex, ey] of eyePositions) {
+      drawEvilEye(ex, ey, r * 0.15, eyeColor, eyeGlow);
     }
-    // 太い怒り眉（目に食い込む）
-    ctx.strokeStyle = '#1c0a00';
-    ctx.lineWidth = Math.max(2.5, r * 0.2);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(r * 0.05, -r * 0.55);
-    ctx.lineTo(-r * 0.58, -r * 0.28);
-    ctx.stroke();
     ctx.restore();
   }
 
@@ -866,7 +902,7 @@
     ctx.save();
     ctx.translate(boss.x, boss.y);
 
-    const bodyColor = '#5d7488';
+    const bodyColor = '#3c4a56';
 
     // 尾びれ（三日月型、後方＝右）
     ctx.fillStyle = bodyColor;
@@ -888,10 +924,13 @@
     ctx.closePath();
     ctx.fill();
 
-    // 背びれ（大きな三角）
+    // 背びれ（大きな三角。後ろ側が食いちぎられて欠けている）
     ctx.beginPath();
     ctx.moveTo(-R * 0.3, -R * 0.6);
     ctx.lineTo(R * 0.1, -R * 1.45);
+    ctx.lineTo(R * 0.26, -R * 1.1);
+    ctx.lineTo(R * 0.2, -R * 0.85);
+    ctx.lineTo(R * 0.38, -R * 0.78);
     ctx.lineTo(R * 0.5, -R * 0.5);
     ctx.closePath();
     ctx.fill();
@@ -949,22 +988,22 @@
       ctx.stroke();
     }
 
-    // 目（白目＋小さい瞳＝凶悪な目つき）
-    ctx.fillStyle = '#fff';
+    // 古傷（脇腹の抉れた跡）
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = Math.max(2, R * 0.06);
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(-R * 0.75, -R * 0.22, R * 0.13, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#0a0508';
-    ctx.beginPath();
-    ctx.arc(-R * 0.8, -R * 0.2, R * 0.06, 0, Math.PI * 2);
-    ctx.fill();
-    // 太い怒り眉
-    ctx.strokeStyle = '#0a0508';
-    ctx.lineWidth = Math.max(3, R * 0.11);
-    ctx.beginPath();
-    ctx.moveTo(-R * 0.5, -R * 0.48);
-    ctx.lineTo(-R * 0.95, -R * 0.28);
+    ctx.moveTo(-R * 0.45, -R * 0.35);
+    ctx.lineTo(-R * 0.15, R * 0.05);
     ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.2, -R * 0.42);
+    ctx.lineTo(-R * 0.02, -R * 0.12);
+    ctx.stroke();
+
+    // 赤く光る三角の吊り目（鼓動するように明滅）
+    const pulse = 0.5 + 0.5 * Math.sin(boss.t * 3);
+    drawTriangleGlareEye(-R * 0.74, -R * 0.24, R / 42, '#ff2a1a', 12 + pulse * 10);
 
     ctx.restore();
 
