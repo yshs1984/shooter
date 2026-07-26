@@ -3,8 +3,8 @@
 
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
-  // パッチ番号(x)はPR番号に自動で合わせられる（.github/workflows/version-bump.yml）
-  const GAME_VERSION = 'v1.0.19';
+  // バージョン番号は version.js（自動生成ファイル）で定義される
+  const GAME_VERSION = window.GAME_VERSION || 'v0.0.0';
 
   let W = 0, H = 0, DPR = 1, playH = 0, controlBarH = 0;
   function resize() {

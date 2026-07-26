@@ -18,11 +18,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update GAME_VERSION to this PR's number
+      - name: Update version.js to this PR's number
         id: bump
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          sed -i -E "s/(const GAME_VERSION = 'v[0-9]+\.[0-9]+\.)[0-9]+(';)/\1${PR_NUMBER}\2/" game.js
+          sed -i -E "s/(window\.GAME_VERSION = 'v[0-9]+\.[0-9]+\.)[0-9]+(';)/\1${PR_NUMBER}\2/" version.js
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -34,6 +34,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add game.js
+          git add version.js
           git commit -m "chore: bump GAME_VERSION to v1.0.${{ github.event.pull_request.number }}"
           git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
