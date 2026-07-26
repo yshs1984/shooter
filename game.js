@@ -30,6 +30,7 @@
   let elapsed = 0;
   let killCount = 0;
   const BOSS_KILL_THRESHOLD = 20;
+  const MAX_LIVES = 5;
 
   // ---------- 入力（画面下部の操作ボタン） ----------
   const controls = { up: false, down: false, left: false, right: false };
@@ -204,8 +205,10 @@
     hp: 3,
     invuln: 0,
     fireCooldown: 0,
-    fireInterval: 0.22,
-    bulletType: 'normal'
+    bulletType: 'normal',
+    rapidFire: false,
+    speedBoost: false,
+    shield: false
   };
 
   function resetPlayer() {
@@ -214,6 +217,9 @@
     player.invuln = 1.0;
     player.fireCooldown = 0;
     player.bulletType = 'normal';
+    player.rapidFire = false;
+    player.speedBoost = false;
+    player.shield = false;
   }
 
   function playerMinX() { return player.size + 4; }
@@ -224,6 +230,10 @@
   let enemyBullets = [];
 
   const BULLET_SPEED = 620;
+  const BASE_FIRE_INTERVAL = 0.38;
+  const RAPID_FIRE_INTERVAL = 0.15;
+  const MOVE_SPEED_NORMAL = 260;
+  const MOVE_SPEED_BOOST = 400;
 
   function spawnPlayerBullet() {
     const x = player.x + player.size;
@@ -240,6 +250,10 @@
       }
     } else if (player.bulletType === 'homing') {
       playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 5, type: 'homing', homing: true });
+    } else if (player.bulletType === 'pierce') {
+      playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 5, type: 'pierce', pierce: true });
+    } else if (player.bulletType === 'wide') {
+      playerBullets.push({ x, y, vx: BULLET_SPEED * 0.85, vy: 0, r: 10, type: 'wide' });
     } else {
       playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 4, type: 'normal' });
     }
@@ -350,11 +364,26 @@
   // ---------- アイテム ----------
   let items = [];
   const ITEM_DROP_CHANCE = 0.22;
-  const ITEM_TYPES = ['spread', 'homing'];
+  const BULLET_ITEM_TYPES = ['spread', 'homing', 'pierce', 'wide'];
+  const ITEM_TYPES = [...BULLET_ITEM_TYPES, 'rapid', 'speed', 'shield', 'heal'];
 
   function spawnItem(x, y) {
     const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
     items.push({ x, y, type, vx: -70, r: 12 });
+  }
+
+  function applyItem(type) {
+    if (BULLET_ITEM_TYPES.includes(type)) {
+      player.bulletType = type;
+    } else if (type === 'rapid') {
+      player.rapidFire = true;
+    } else if (type === 'speed') {
+      player.speedBoost = true;
+    } else if (type === 'shield') {
+      player.shield = true;
+    } else if (type === 'heal') {
+      lives = Math.min(lives + 1, MAX_LIVES);
+    }
   }
 
   function updateItems(dt) {
@@ -364,7 +393,7 @@
     for (const it of items) {
       if (dist(it.x, it.y, player.x, player.y) < it.r + player.hitRadius) {
         it.picked = true;
-        player.bulletType = it.type;
+        applyItem(it.type);
       }
     }
     items = items.filter(it => !it.picked);
@@ -377,6 +406,11 @@
 
   function hitPlayer() {
     if (player.invuln > 0) return;
+    if (player.shield) {
+      player.shield = false;
+      player.invuln = 0.6;
+      return;
+    }
     lives -= 1;
     player.invuln = 1.5;
     if (lives <= 0) {
@@ -409,7 +443,7 @@
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
 
-    const MOVE_SPEED = 260;
+    const MOVE_SPEED = player.speedBoost ? MOVE_SPEED_BOOST : MOVE_SPEED_NORMAL;
     let mvx = 0, mvy = 0;
     if (controls.up) mvy -= 1;
     if (controls.down) mvy += 1;
@@ -425,7 +459,7 @@
 
     player.fireCooldown -= dt;
     if (player.fireCooldown <= 0) {
-      player.fireCooldown = player.fireInterval;
+      player.fireCooldown = player.rapidFire ? RAPID_FIRE_INTERVAL : BASE_FIRE_INTERVAL;
       spawnPlayerBullet();
     }
 
@@ -475,8 +509,16 @@
     for (const e of enemies) {
       for (const b of playerBullets) {
         if (b.hit) continue;
+        if (b.pierce) {
+          b.hitSet = b.hitSet || new Set();
+          if (b.hitSet.has(e)) continue;
+        }
         if (dist(e.x, e.y, b.x, b.y) < e.r + b.r) {
-          b.hit = true;
+          if (b.pierce) {
+            b.hitSet.add(e);
+          } else {
+            b.hit = true;
+          }
           e.hp -= 1;
         }
       }
@@ -496,8 +538,16 @@
     if (boss) {
       for (const b of playerBullets) {
         if (b.hit) continue;
+        if (b.pierce) {
+          b.hitSet = b.hitSet || new Set();
+          if (b.hitSet.has(boss)) continue;
+        }
         if (dist(boss.x, boss.y, b.x, b.y) < boss.r + b.r) {
-          b.hit = true;
+          if (b.pierce) {
+            b.hitSet.add(boss);
+          } else {
+            b.hit = true;
+          }
           boss.hp -= 1;
         }
       }
@@ -574,7 +624,10 @@
     ctx.fillRect(barX, barY, barW * (boss.hp / boss.maxHp), 10);
   }
 
-  const BULLET_COLORS = { normal: '#e8ffff', spread: '#8bffb0', homing: '#ff6fd8' };
+  const BULLET_COLORS = {
+    normal: '#e8ffff', spread: '#8bffb0', homing: '#ff6fd8',
+    pierce: '#ffd166', wide: '#5ad1ff'
+  };
 
   function drawBullets() {
     for (const b of playerBullets) {
@@ -591,14 +644,21 @@
     }
   }
 
-  const ITEM_LABELS = { spread: '3', homing: 'H' };
+  const ITEM_COLORS = {
+    spread: '#8bffb0', homing: '#ff6fd8', pierce: '#ffd166', wide: '#5ad1ff',
+    rapid: '#ff9f45', speed: '#a685ff', shield: '#66e0c8', heal: '#ff8fa3'
+  };
+  const ITEM_LABELS = {
+    spread: '3', homing: 'H', pierce: 'P', wide: 'W',
+    rapid: 'R', speed: 'M', shield: 'B', heal: '+'
+  };
 
   function drawItems() {
     for (const it of items) {
       ctx.save();
       ctx.translate(it.x, it.y);
       ctx.rotate(Math.PI / 4);
-      ctx.fillStyle = BULLET_COLORS[it.type] || '#fff';
+      ctx.fillStyle = ITEM_COLORS[it.type] || '#fff';
       ctx.fillRect(-it.r, -it.r, it.r * 2, it.r * 2);
       ctx.restore();
 
@@ -655,7 +715,7 @@
     drawButton(buttons.right, '▶', controls.right);
   }
 
-  const ITEM_NAMES = { spread: '3-WAY', homing: 'HOMING' };
+  const ITEM_NAMES = { spread: '3-WAY', homing: 'HOMING', pierce: 'PIERCE', wide: 'WIDE' };
 
   function drawHud() {
     ctx.fillStyle = '#fff';
@@ -663,9 +723,21 @@
     ctx.textBaseline = 'top';
     ctx.fillText(`SCORE ${score}`, 12, 12);
     ctx.fillText('LIFE ' + '♥'.repeat(Math.max(0, lives)), 12, 34);
+
+    const badges = [];
     if (player.bulletType !== 'normal') {
-      ctx.fillStyle = BULLET_COLORS[player.bulletType] || '#fff';
-      ctx.fillText(ITEM_NAMES[player.bulletType], 12, 56);
+      badges.push({ text: ITEM_NAMES[player.bulletType], color: ITEM_COLORS[player.bulletType] });
+    }
+    if (player.rapidFire) badges.push({ text: 'RAPID', color: ITEM_COLORS.rapid });
+    if (player.speedBoost) badges.push({ text: 'SPEED', color: ITEM_COLORS.speed });
+    if (player.shield) badges.push({ text: 'SHIELD', color: ITEM_COLORS.shield });
+
+    let bx = 12;
+    ctx.font = '14px sans-serif';
+    for (const b of badges) {
+      ctx.fillStyle = b.color;
+      ctx.fillText(b.text, bx, 56);
+      bx += ctx.measureText(b.text).width + 14;
     }
   }
 
