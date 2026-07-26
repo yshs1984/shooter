@@ -1,27 +1,35 @@
 name: Bump game version
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches-ignore:
+      - main
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   bump-version:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
+    if: github.event.pusher.name != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR branch
+      - name: Checkout branch
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find open PR for this branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${{ github.ref_name }}" --state open --json number --jq '.[0].number // empty')
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: Update version.js to this PR's number
         id: bump
+        if: steps.pr.outputs.number != ''
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
           sed -i -E "s/(window\.GAME_VERSION = 'v[0-9]+\.[0-9]+\.)[^']+(';)/\1${PR_NUMBER}\2/" version.js
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -35,5 +43,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.js
-          git commit -m "chore: bump GAME_VERSION to v1.0.${{ github.event.pull_request.number }}"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          git commit -m "chore: bump GAME_VERSION to v1.0.${{ steps.pr.outputs.number }}"
+          git push origin "HEAD:${{ github.ref_name }}"
