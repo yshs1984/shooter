@@ -272,6 +272,82 @@
     ctx.globalAlpha = 1;
   }
 
+  function drawTerrain() {
+    const step = 12;
+
+    const grad = ctx.createLinearGradient(0, playH * 0.55, 0, playH);
+    grad.addColorStop(0, '#2b4a3a');
+    grad.addColorStop(1, '#0e2018');
+    ctx.fillStyle = grad;
+
+    ctx.beginPath();
+    ctx.moveTo(0, playH);
+    for (let sx = 0; sx <= W; sx += step) {
+      ctx.lineTo(sx, terrainSurfaceY(sx));
+    }
+    ctx.lineTo(W, playH);
+    ctx.closePath();
+    ctx.fill();
+
+    // 稜線のハイライト
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let sx = 0; sx <= W; sx += step) {
+      const y = terrainSurfaceY(sx);
+      if (sx === 0) ctx.moveTo(sx, y);
+      else ctx.lineTo(sx, y);
+    }
+    ctx.stroke();
+  }
+
+  // ---------- 海底（起伏のある地形。当たり判定あり） ----------
+  const TERRAIN_SCROLL_SPEED = 110;
+  const TERRAIN_PERIOD = 700;
+  let terrainOffset = 0;
+
+  // 決定的な擬似乱数（同じnには常に同じ値を返す）
+  function terrainHash(n) {
+    const s = Math.sin(n * 12.9898) * 43758.5453123;
+    return s - Math.floor(s);
+  }
+
+  // ワールド座標x（画面スクロール分を含む）における海底の高さ（playHからの隆起量）
+  function terrainHeightAt(worldX) {
+    const rolling = 14 + Math.sin(worldX * 0.004) * 8 + Math.sin(worldX * 0.011 + 1.7) * 5;
+
+    const periodIndex = Math.floor(worldX / TERRAIN_PERIOD);
+    const r1 = terrainHash(periodIndex);
+    const r2 = terrainHash(periodIndex + 100);
+    const r3 = terrainHash(periodIndex + 200);
+
+    let mountain = 0;
+    if (r1 < 0.6) {
+      const center = periodIndex * TERRAIN_PERIOD + TERRAIN_PERIOD * (0.3 + r2 * 0.4);
+      const halfWidth = 140 + r3 * 110;
+      const d = worldX - center;
+      if (Math.abs(d) < halfWidth) {
+        const t = d / halfWidth;
+        const peakH = playH * 0.18 + r1 * (playH * 0.22); // 控えめ〜プレイエリアの4割程度
+        mountain = Math.cos((t * Math.PI) / 2) ** 2 * peakH;
+      }
+    }
+    return rolling + mountain;
+  }
+
+  // 画面座標xにおける海底の表面のy座標
+  function terrainSurfaceY(screenX) {
+    return playH - terrainHeightAt(screenX + terrainOffset);
+  }
+
+  function collidesTerrain(x, y, r) {
+    return y + r > terrainSurfaceY(x);
+  }
+
+  function updateTerrain(dt) {
+    terrainOffset += TERRAIN_SCROLL_SPEED * dt;
+  }
+
   // ---------- 自機 ----------
   const player = {
     x: 0,
@@ -492,6 +568,9 @@
     const lungeOffset = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * lungeDepth : 0;
     boss.x = boss.baseX - lungeOffset;
 
+    // 海底に見た目上埋まらないよう浮上させる（当たり判定はなし）
+    boss.y = Math.min(boss.y, terrainSurfaceY(boss.x) - boss.r);
+
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
       boss.fireCooldown = 0.9;
@@ -577,6 +656,7 @@
     volcano = null;
     volcanoSpawned = false;
     spawnTimer = 0;
+    terrainOffset = 0;
     initBubbles();
     resetPlayer();
   }
@@ -585,6 +665,8 @@
     updateBubbles(dt);
 
     if (state !== STATE_PLAYING) return;
+
+    updateTerrain(dt);
 
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
@@ -602,6 +684,12 @@
     }
     player.y = Math.max(player.size, Math.min(playH - player.size, player.y));
     player.x = Math.max(playerMinX(), Math.min(playerMaxX(), player.x));
+
+    // 海底との当たり判定
+    if (collidesTerrain(player.x, player.y, player.hitRadius)) {
+      hitPlayer();
+      player.y = terrainSurfaceY(player.x) - player.hitRadius;
+    }
 
     player.fireCooldown -= dt;
     if (player.fireCooldown <= 0) {
@@ -627,13 +715,17 @@
       b.x += b.vx * dt;
       b.y += b.vy * dt;
     }
-    playerBullets = playerBullets.filter(b => b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20);
+    playerBullets = playerBullets.filter(b =>
+      b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20 && !collidesTerrain(b.x, b.y, b.r)
+    );
 
     for (const b of enemyBullets) {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
     }
-    enemyBullets = enemyBullets.filter(b => b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20);
+    enemyBullets = enemyBullets.filter(b =>
+      b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20 && !collidesTerrain(b.x, b.y, b.r)
+    );
 
     if (!boss) {
       spawnTimer -= dt;
@@ -642,7 +734,7 @@
         spawnEnemy();
       }
       for (const e of enemies) updateEnemy(e, dt);
-      enemies = enemies.filter(e => e.x > -40);
+      enemies = enemies.filter(e => e.x > -40 && !collidesTerrain(e.x, e.y, e.r));
 
       if (!volcanoSpawned && killCount >= VOLCANO_TRIGGER_KILLS) {
         volcanoSpawned = true;
@@ -1363,6 +1455,7 @@
     drawOceanBackground();
 
     if (state === STATE_PLAYING || state === STATE_PAUSED) {
+      drawTerrain();
       if (volcano) drawVolcano(volcano);
       drawEnemies();
       drawItems();
