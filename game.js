@@ -283,7 +283,7 @@
   }
 
   function drawTerrain() {
-    const step = 12;
+    const step = 5;
 
     const grad = ctx.createLinearGradient(0, playH * 0.55, 0, playH);
     grad.addColorStop(0, '#2b4a3a');
@@ -326,6 +326,12 @@
   function terrainHeightAt(worldX) {
     const rolling = 14 + Math.sin(worldX * 0.004) * 8 + Math.sin(worldX * 0.011 + 1.7) * 5;
 
+    // ゴツゴツした岩肌の凹凸（高周波の山なりを複数重ね、鋭い突起にする）
+    const jag =
+      Math.abs(Math.sin(worldX * 0.09 + 3.1)) * 7 +
+      Math.abs(Math.sin(worldX * 0.23 + 1.2)) * 4 +
+      Math.abs(Math.sin(worldX * 0.53 + 5.4)) * 2.2;
+
     const periodIndex = Math.floor(worldX / TERRAIN_PERIOD);
     const r1 = terrainHash(periodIndex);
     const r2 = terrainHash(periodIndex + 100);
@@ -342,7 +348,7 @@
         mountain = Math.cos((t * Math.PI) / 2) ** 2 * peakH;
       }
     }
-    return rolling + mountain;
+    return rolling + jag + mountain;
   }
 
   // 画面座標xにおける海底の表面のy座標
