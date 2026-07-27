@@ -387,6 +387,44 @@
   function playerMinX() { return player.size + 4; }
   function playerMaxX() { return W * 0.6; }
 
+  // ---------- 潜水艦の気泡（艦尾から漏れる小さな泡） ----------
+  let playerBubbles = [];
+  let playerBubbleTimer = 0;
+
+  function updatePlayerBubbles(dt) {
+    playerBubbleTimer -= dt;
+    if (playerBubbleTimer <= 0) {
+      playerBubbleTimer = 0.08 + Math.random() * 0.07;
+      playerBubbles.push({
+        x: player.x - player.size * 1.3 + (Math.random() - 0.5) * 6,
+        y: player.y + (Math.random() - 0.5) * 10,
+        vx: -26 - Math.random() * 18,
+        vy: -16 - Math.random() * 20,
+        size: 1 + Math.random() * 2,
+        life: 0.7 + Math.random() * 0.4,
+        maxLife: 0
+      });
+      playerBubbles[playerBubbles.length - 1].maxLife = playerBubbles[playerBubbles.length - 1].life;
+    }
+    for (const b of playerBubbles) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.life -= dt;
+    }
+    playerBubbles = playerBubbles.filter(b => b.life > 0);
+  }
+
+  function drawPlayerBubbles() {
+    ctx.fillStyle = '#dff7ff';
+    for (const b of playerBubbles) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, b.life / b.maxLife)) * 0.55;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // ---------- 弾 ----------
   let playerBullets = [];
   let enemyBullets = [];
@@ -705,6 +743,8 @@
     terrainOffset = 0;
     currentStage = 1;
     stageBannerTimer = 0;
+    playerBubbles = [];
+    playerBubbleTimer = 0;
     initBubbles();
     resetPlayer();
   }
@@ -719,6 +759,7 @@
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
     if (stageBannerTimer > 0) stageBannerTimer -= dt;
+    updatePlayerBubbles(dt);
 
     const MOVE_SPEED = player.speedBoost ? MOVE_SPEED_BOOST : MOVE_SPEED_NORMAL;
     let mvx = 0, mvy = 0;
@@ -1679,6 +1720,7 @@
       drawItems();
       drawBoss();
       drawBullets();
+      drawPlayerBubbles();
       drawPlayer();
       drawHud();
       drawControls();
