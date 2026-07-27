@@ -33,6 +33,16 @@
   const BOSS_KILL_THRESHOLD = 20;
   const MAX_LIVES = 5;
 
+  // ---------- 面構成 ----------
+  const STAGE_BOSSES = [
+    { kind: 'shark', hp: 60, score: 500 },
+    { kind: 'crab', hp: 75, score: 650 },
+    { kind: 'squid', hp: 95, score: 800 }
+  ];
+  let currentStage = 1;
+  let stageBannerTimer = 0;
+  let stageBannerText = '';
+
   // ---------- 入力（画面下部の操作ボタン） ----------
   const controls = { up: false, down: false, left: false, right: false };
   const buttons = {
@@ -525,19 +535,29 @@
   // ---------- ボス ----------
   let boss = null;
 
+  const BOSS_FIRE_SPREAD = {
+    shark: [-60, 0, 60],
+    crab: [-110, -55, 0, 55, 110]
+  };
+
   function spawnBoss() {
+    const def = STAGE_BOSSES[currentStage - 1];
+    const baseX = W - 140;
     boss = {
-      x: W - 140,
-      baseX: W - 140,
+      kind: def.kind,
+      x: W + 80,
+      baseX,
       y: playH / 2,
       r: 46,
-      hp: 60,
-      maxHp: 60,
+      hp: def.hp,
+      maxHp: def.hp,
       t: 0,
       fireCooldown: 1.0,
       lunging: false,
       lungeT: 0,
-      lungeTimer: 2.5 + Math.random() * 1.5
+      lungeTimer: 2.5 + Math.random() * 1.5,
+      entering: true,
+      enterT: 0
     };
     enemies = [];
     enemyBullets = [];
@@ -547,6 +567,21 @@
   function updateBoss(dt) {
     if (!boss) return;
     boss.t += dt;
+
+    // 画面後方から自然に泳いで登場する
+    if (boss.entering) {
+      boss.enterT += dt / 1.4;
+      const t = Math.min(1, boss.enterT);
+      const eased = 1 - Math.pow(1 - t, 3);
+      boss.x = (W + 80) + (boss.baseX - (W + 80)) * eased;
+      boss.y = playH / 2;
+      if (t >= 1) {
+        boss.entering = false;
+        boss.x = boss.baseX;
+      }
+      return;
+    }
+
     boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
 
     // 前方への突進（ブロック崩しのボスが突っ込んでくる動きと同じ考え方）
@@ -573,13 +608,24 @@
 
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
-      boss.fireCooldown = 0.9;
-      const speed = 220;
-      for (let i = -1; i <= 1; i++) {
-        const dx = (player.x - boss.x);
-        const dy = (player.y - boss.y) + i * 60;
-        const len = Math.max(1, Math.hypot(dx, dy));
-        spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed);
+      if (boss.kind === 'squid') {
+        boss.fireCooldown = 1.1;
+        const n = 8;
+        const speed = 180;
+        for (let i = 0; i < n; i++) {
+          const a = (Math.PI * 2 * i) / n + boss.t;
+          spawnEnemyBullet(boss.x, boss.y, Math.cos(a) * speed, Math.sin(a) * speed);
+        }
+      } else {
+        boss.fireCooldown = 0.9;
+        const speed = 220;
+        const offsets = BOSS_FIRE_SPREAD[boss.kind] || BOSS_FIRE_SPREAD.shark;
+        for (const dyOff of offsets) {
+          const dx = player.x - boss.x;
+          const dy = (player.y - boss.y) + dyOff;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed);
+        }
       }
     }
   }
@@ -657,6 +703,8 @@
     volcanoSpawned = false;
     spawnTimer = 0;
     terrainOffset = 0;
+    currentStage = 1;
+    stageBannerTimer = 0;
     initBubbles();
     resetPlayer();
   }
@@ -670,6 +718,7 @@
 
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
+    if (stageBannerTimer > 0) stageBannerTimer -= dt;
 
     const MOVE_SPEED = player.speedBoost ? MOVE_SPEED_BOOST : MOVE_SPEED_NORMAL;
     let mvx = 0, mvy = 0;
@@ -796,9 +845,18 @@
         }
       }
       if (boss.hp <= 0) {
-        score += 500;
+        score += STAGE_BOSSES[currentStage - 1].score;
         boss = null;
-        state = STATE_CLEAR;
+        if (currentStage < STAGE_BOSSES.length) {
+          currentStage += 1;
+          killCount = 0;
+          volcanoSpawned = false;
+          spawnTimer = Math.max(spawnTimer, 1.2);
+          stageBannerTimer = 2.2;
+          stageBannerText = `STAGE ${currentStage}`;
+        } else {
+          state = STATE_CLEAR;
+        }
       }
     }
     playerBullets = playerBullets.filter(b => !b.hit);
@@ -1104,12 +1162,7 @@
     }
   }
 
-  function drawBoss() {
-    if (!boss) return;
-    const R = boss.r;
-    ctx.save();
-    ctx.translate(boss.x, boss.y);
-
+  function drawSharkBossBody(R) {
     const bodyColor = '#3c4a56';
 
     // 尾びれ（三日月型、後方＝右）
@@ -1212,6 +1265,153 @@
     // 赤く光る三角の吊り目（鼓動するように明滅）
     const pulse = 0.5 + 0.5 * Math.sin(boss.t * 3);
     drawTriangleGlareEye(-R * 0.74, -R * 0.24, R / 42, '#ff2a1a', 12 + pulse * 10);
+  }
+
+  function drawCrabBossBody(R) {
+    const shellColor = '#8a3a2c';
+    const clawColor = '#b0492f';
+    const pulse = 0.5 + 0.5 * Math.sin(boss.t * 3);
+
+    // 脚（甲羅の下から放射状に）
+    ctx.strokeStyle = shellColor;
+    ctx.lineWidth = Math.max(3, R * 0.09);
+    ctx.lineCap = 'round';
+    for (const dir of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const baseX = R * (0.35 - i * 0.35) * dir;
+        const kneeX = baseX + R * 0.28 * dir;
+        const kneeY = R * 0.75;
+        const footX = baseX + R * 0.5 * dir;
+        const footY = R * 1.25;
+        ctx.beginPath();
+        ctx.moveTo(baseX, R * 0.4);
+        ctx.lineTo(kneeX, kneeY);
+        ctx.lineTo(footX, footY);
+        ctx.stroke();
+      }
+    }
+
+    // 甲羅（横長の丸い形）
+    ctx.fillStyle = shellColor;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R * 1.05, R * 0.72, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 甲羅の模様（背側の隆起した筋）
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = Math.max(2, R * 0.045);
+    ctx.beginPath();
+    ctx.ellipse(0, -R * 0.08, R * 0.78, R * 0.4, 0, Math.PI * 1.08, Math.PI * 1.92);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.5, -R * 0.35);
+    ctx.lineTo(-R * 0.5, -R * 0.15);
+    ctx.moveTo(R * 0.5, -R * 0.35);
+    ctx.lineTo(R * 0.5, -R * 0.15);
+    ctx.stroke();
+
+    // 目（甲羅の前方、柄の上）
+    ctx.strokeStyle = shellColor;
+    ctx.lineWidth = Math.max(3, R * 0.08);
+    for (const ex of [-R * 0.32, -R * 0.02]) {
+      ctx.beginPath();
+      ctx.moveTo(ex, -R * 0.55);
+      ctx.lineTo(ex - R * 0.12, -R * 0.95);
+      ctx.stroke();
+      drawEvilEye(ex - R * 0.12, -R * 0.95, R * 0.13, '#ff2a1a', 8 + pulse * 6);
+    }
+
+    // ハサミ（開閉するように上下の爪を少し動かす）
+    const pinch = 0.5 + 0.5 * Math.sin(boss.t * 2.4);
+    for (const dir of [-1, 1]) {
+      ctx.save();
+      ctx.translate(-R * 1.15, dir * R * 0.5);
+      ctx.rotate(dir * (0.25 + pinch * 0.12));
+      ctx.fillStyle = clawColor;
+      // 腕
+      ctx.beginPath();
+      ctx.ellipse(R * 0.35, 0, R * 0.4, R * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // 爪（上下2枚）
+      ctx.beginPath();
+      ctx.moveTo(-R * 0.05, -R * 0.05);
+      ctx.lineTo(-R * 0.5, -R * 0.32 - pinch * R * 0.12);
+      ctx.lineTo(-R * 0.32, R * 0.02);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-R * 0.05, R * 0.05);
+      ctx.lineTo(-R * 0.5, R * 0.32 + pinch * R * 0.12);
+      ctx.lineTo(-R * 0.32, -R * 0.02);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawSquidBossBody(R) {
+    const mantleColor = '#7a1f3d';
+    const t = boss.t;
+
+    // 触腕（波打ちながら前方＝左に伸びる）
+    ctx.strokeStyle = mantleColor;
+    ctx.lineWidth = Math.max(3, R * 0.09);
+    ctx.lineCap = 'round';
+    for (let i = -3; i <= 3; i++) {
+      const baseY = i * R * 0.16;
+      const midX = -R * 1.1 + Math.sin(t * 2.4 + i) * R * 0.25;
+      const midY = baseY + Math.cos(t * 2 + i) * R * 0.18;
+      const endX = -R * 2.1 + Math.sin(t * 2.4 + i + 1) * R * 0.3;
+      const endY = baseY + Math.sin(t * 2 + i + 1) * R * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(-R * 0.55, baseY * 0.4);
+      ctx.quadraticCurveTo(midX, midY, endX, endY);
+      ctx.stroke();
+    }
+
+    // マント（丸みのある胴体、後方に尾びれ状の突起）
+    ctx.fillStyle = mantleColor;
+    ctx.beginPath();
+    ctx.moveTo(R * 1.3, 0);
+    ctx.quadraticCurveTo(R * 0.6, -R * 1.1, -R * 0.3, -R * 0.8);
+    ctx.quadraticCurveTo(-R * 0.65, -R * 0.3, -R * 0.65, 0);
+    ctx.quadraticCurveTo(-R * 0.65, R * 0.3, -R * 0.3, R * 0.8);
+    ctx.quadraticCurveTo(R * 0.6, R * 1.1, R * 1.3, 0);
+    ctx.closePath();
+    ctx.fill();
+    // ひれ（左右の三角）
+    ctx.beginPath();
+    ctx.moveTo(R * 0.3, -R * 0.7);
+    ctx.lineTo(R * 0.95, -R * 1.25);
+    ctx.lineTo(R * 0.55, -R * 0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(R * 0.3, R * 0.7);
+    ctx.lineTo(R * 0.95, R * 1.25);
+    ctx.lineTo(R * 0.55, R * 0.45);
+    ctx.closePath();
+    ctx.fill();
+
+    // 大きな目（縦に裂けた瞳孔）
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+    for (const ey of [-R * 0.28, R * 0.28]) {
+      ctx.fillStyle = '#2a0a18';
+      ctx.beginPath();
+      ctx.arc(-R * 0.15, ey, R * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+      drawEvilEye(-R * 0.15, ey, R * 0.17, '#ff2a5a', 10 + pulse * 8);
+    }
+  }
+
+  function drawBoss() {
+    if (!boss) return;
+    const R = boss.r;
+    ctx.save();
+    ctx.translate(boss.x, boss.y);
+
+    if (boss.kind === 'crab') drawCrabBossBody(R);
+    else if (boss.kind === 'squid') drawSquidBossBody(R);
+    else drawSharkBossBody(R);
 
     ctx.restore();
 
@@ -1372,6 +1572,9 @@
     ctx.textBaseline = 'top';
     ctx.fillText(`SCORE ${score}`, 12, 12);
     ctx.fillText('LIFE ' + '♥'.repeat(Math.max(0, lives)), 12, 34);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(`STAGE ${currentStage}/${STAGE_BOSSES.length}`, 12, 56);
 
     const badges = [];
     if (player.bulletType !== 'normal') {
@@ -1385,9 +1588,24 @@
     ctx.font = '14px sans-serif';
     for (const b of badges) {
       ctx.fillStyle = b.color;
-      ctx.fillText(b.text, bx, 56);
+      ctx.fillText(b.text, bx, 76);
       bx += ctx.measureText(b.text).width + 14;
     }
+  }
+
+  function drawStageBanner() {
+    const t = stageBannerTimer;
+    const alpha = t > 1.7 ? (2.2 - t) / 0.5 : Math.min(1, t / 0.5);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText(stageBannerText, W / 2, playH / 2);
+    ctx.restore();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   function drawPauseButton() {
@@ -1464,6 +1682,7 @@
       drawPlayer();
       drawHud();
       drawControls();
+      if (state === STATE_PLAYING && stageBannerTimer > 0) drawStageBanner();
       if (state === STATE_PAUSED) drawPauseOverlay();
       drawPauseButton();
     } else if (state === STATE_TITLE) {
@@ -1484,7 +1703,7 @@
       ]);
     } else if (state === STATE_CLEAR) {
       drawCenterText([
-        { text: 'CLEAR!', font: 'bold 26px sans-serif' },
+        { text: 'ALL CLEAR!', font: 'bold 26px sans-serif' },
         { text: `SCORE ${score}`, font: '18px sans-serif' },
         { text: 'タップでリスタート', font: '16px sans-serif' }
       ]);
