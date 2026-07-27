@@ -995,9 +995,6 @@
 
   function drawShieldEffect() {
     const s = player.size;
-    // 潜水艦の船体（葉巻型）の輪郭に沿った横長の楕円にする
-    const baseRx = s * 1.85;
-    const baseRy = s * 0.95;
     if (player.shield) {
       const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4);
       ctx.save();
@@ -1007,11 +1004,11 @@
       ctx.strokeStyle = `rgba(102,224,200,${0.55 + pulse * 0.25})`;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.ellipse(0, 0, baseRx + pulse * 2, baseRy + pulse * 1, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, s * 1.7 + pulse * 2, 0, Math.PI * 2);
       ctx.stroke();
       ctx.fillStyle = 'rgba(102,224,200,0.08)';
       ctx.beginPath();
-      ctx.ellipse(0, 0, baseRx + pulse * 2, baseRy + pulse * 1, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, s * 1.7 + pulse * 2, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -1023,7 +1020,7 @@
       ctx.strokeStyle = '#66e0c8';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.ellipse(0, 0, baseRx + t * s * 0.9, baseRy + t * s * 0.5, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, s * 1.7 + t * s * 0.9, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
