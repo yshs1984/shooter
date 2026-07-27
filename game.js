@@ -21,6 +21,7 @@
   // ---------- ゲーム状態 ----------
   const STATE_TITLE = 'title';
   const STATE_PLAYING = 'playing';
+  const STATE_PAUSED = 'paused';
   const STATE_GAMEOVER = 'gameover';
   const STATE_CLEAR = 'clear';
 
@@ -42,6 +43,9 @@
   };
   const activePointers = new Map();
   const MOUSE_ID = 'mouse';
+
+  let pauseButton = { x: 0, y: 0, w: 0, h: 0 };
+  let restartButton = { x: 0, y: 0, w: 0, h: 0 };
 
   const KEY_DIRECTIONS = {
     ArrowUp: 'up', KeyW: 'up',
@@ -65,6 +69,11 @@
     buttons.down = { x: padCX - btn / 2, y: padCY + gap, w: btn, h: btn };
     buttons.left = { x: padCX - cell - btn / 2, y: padCY - btn / 2, w: btn, h: btn };
     buttons.right = { x: padCX + cell - btn / 2, y: padCY - btn / 2, w: btn, h: btn };
+
+    const pbSize = 40;
+    pauseButton = { x: W - pbSize - 12, y: 12, w: pbSize, h: pbSize };
+    const rbW = 170, rbH = 46;
+    restartButton = { x: W / 2 - rbW / 2, y: H / 2 + 30, w: rbW, h: rbH };
   }
 
   function localPos(clientX, clientY) {
@@ -96,10 +105,34 @@
     }
   }
 
+  function togglePause() {
+    if (state === STATE_PLAYING) state = STATE_PAUSED;
+    else if (state === STATE_PAUSED) state = STATE_PLAYING;
+  }
+
+  // ポーズ関連のボタンをタップした場合はtrueを返し、通常の入力処理（操作ボタン・スタート判定）を行わせない
+  function handlePointerDown(pos) {
+    if (state === STATE_PLAYING && inRect(pos.x, pos.y, pauseButton)) {
+      togglePause();
+      return true;
+    }
+    if (state === STATE_PAUSED) {
+      if (inRect(pos.x, pos.y, pauseButton)) {
+        togglePause();
+      } else if (inRect(pos.x, pos.y, restartButton)) {
+        startGame();
+      }
+      return true;
+    }
+    return false;
+  }
+
   function onTouchStart(e) {
     e.preventDefault();
     for (const t of e.changedTouches) {
-      activePointers.set(t.identifier, localPos(t.clientX, t.clientY));
+      const pos = localPos(t.clientX, t.clientY);
+      if (handlePointerDown(pos)) continue;
+      activePointers.set(t.identifier, pos);
     }
     recomputeControls();
     maybeStartOrRestart();
@@ -120,7 +153,9 @@
   }
 
   function onMouseDown(e) {
-    activePointers.set(MOUSE_ID, localPos(e.clientX, e.clientY));
+    const pos = localPos(e.clientX, e.clientY);
+    if (handlePointerDown(pos)) return;
+    activePointers.set(MOUSE_ID, pos);
     recomputeControls();
     maybeStartOrRestart();
   }
@@ -146,6 +181,11 @@
     if (e.code === 'Space' || e.code === 'Enter') {
       e.preventDefault();
       maybeStartOrRestart();
+      return;
+    }
+    if (e.code === 'KeyP' || e.code === 'Escape') {
+      e.preventDefault();
+      togglePause();
     }
   }
   function onKeyUp(e) {
@@ -1350,6 +1390,51 @@
     }
   }
 
+  function drawPauseButton() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    roundRect(pauseButton.x, pauseButton.y, pauseButton.w, pauseButton.h, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#dff7ff';
+    const cx = pauseButton.x + pauseButton.w / 2;
+    const cy = pauseButton.y + pauseButton.h / 2;
+    if (state === STATE_PAUSED) {
+      // 再生アイコン（三角）
+      ctx.beginPath();
+      ctx.moveTo(cx - 6, cy - 8);
+      ctx.lineTo(cx - 6, cy + 8);
+      ctx.lineTo(cx + 8, cy);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // 一時停止アイコン（縦棒2本）
+      const barW = 4, barH = 14, gap = 4;
+      ctx.fillRect(cx - gap - barW, cy - barH / 2, barW, barH);
+      ctx.fillRect(cx + gap, cy - barH / 2, barW, barH);
+    }
+    ctx.restore();
+  }
+
+  function drawPauseOverlay() {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText('PAUSED', W / 2, H / 2 - 40);
+    ctx.font = '15px sans-serif';
+    ctx.fillText('右上のボタンで再開', W / 2, H / 2 - 6);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+
+    drawButton(restartButton, 'RESTART', false);
+  }
+
   function drawCenterText(lines) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(0, 0, W, H);
@@ -1369,7 +1454,7 @@
   function render() {
     drawOceanBackground();
 
-    if (state === STATE_PLAYING) {
+    if (state === STATE_PLAYING || state === STATE_PAUSED) {
       drawTerrain();
       if (volcano) drawVolcano(volcano);
       drawEnemies();
@@ -1379,6 +1464,8 @@
       drawPlayer();
       drawHud();
       drawControls();
+      if (state === STATE_PAUSED) drawPauseOverlay();
+      drawPauseButton();
     } else if (state === STATE_TITLE) {
       drawCenterText([
         { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
