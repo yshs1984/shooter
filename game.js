@@ -370,7 +370,8 @@
     bulletType: 'normal',
     rapidFire: false,
     speedBoost: false,
-    shield: false
+    shield: false,
+    shieldPopTimer: 0
   };
 
   function resetPlayer() {
@@ -382,6 +383,7 @@
     player.rapidFire = false;
     player.speedBoost = false;
     player.shield = false;
+    player.shieldPopTimer = 0;
   }
 
   function playerMinX() { return player.size + 4; }
@@ -715,6 +717,7 @@
     if (player.invuln > 0) return;
     if (player.shield) {
       player.shield = false;
+      player.shieldPopTimer = 0.4;
       player.invuln = 0.6;
       return;
     }
@@ -759,6 +762,7 @@
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
     if (stageBannerTimer > 0) stageBannerTimer -= dt;
+    if (player.shieldPopTimer > 0) player.shieldPopTimer -= dt;
     updatePlayerBubbles(dt);
 
     const MOVE_SPEED = player.speedBoost ? MOVE_SPEED_BOOST : MOVE_SPEED_NORMAL;
@@ -987,6 +991,39 @@
     }
 
     ctx.restore();
+  }
+
+  function drawShieldEffect() {
+    const s = player.size;
+    if (player.shield) {
+      const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4);
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.shadowColor = '#66e0c8';
+      ctx.shadowBlur = 10 + pulse * 8;
+      ctx.strokeStyle = `rgba(102,224,200,${0.55 + pulse * 0.25})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 1.7 + pulse * 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(102,224,200,0.08)';
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 1.7 + pulse * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    if (player.shieldPopTimer > 0) {
+      const t = 1 - player.shieldPopTimer / 0.4; // 0→1
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.globalAlpha = 1 - t;
+      ctx.strokeStyle = '#66e0c8';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 1.7 + t * s * 0.9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // 赤く光る丸い目。暗い眼窩に浮かぶ残り火のような見え方にする
@@ -1721,6 +1758,7 @@
       drawBoss();
       drawBullets();
       drawPlayerBubbles();
+      drawShieldEffect();
       drawPlayer();
       drawHud();
       drawControls();
