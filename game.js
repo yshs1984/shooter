@@ -73,7 +73,7 @@
     const gap = 8;
     const cell = btn + gap;
     const padCX = 24 + cell * 1.5;
-    const padCY = playH + controlBarH / 2;
+    const padCY = playH + controlBarH * 0.38;
 
     buttons.up = { x: padCX - btn / 2, y: padCY - cell, w: btn, h: btn };
     buttons.down = { x: padCX - btn / 2, y: padCY + gap, w: btn, h: btn };
