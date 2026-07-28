@@ -549,7 +549,7 @@
         const dy = player.y - e.y;
         const len = Math.max(1, Math.hypot(dx, dy));
         const speed = 260;
-        spawnEnemyBullet(e.x, e.y, (dx / len) * speed, (dy / len) * speed, { r: 4, kind: 'spike' });
+        spawnEnemyBullet(e.x, e.y, (dx / len) * speed, (dy / len) * speed, { r: 6, kind: 'spike' });
       }
     }
   }
@@ -1576,13 +1576,19 @@
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.rotate(Math.atan2(b.vy, b.vx));
-        ctx.fillStyle = '#8f3d16';
+        ctx.shadowColor = '#ffcf3a';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#ffcf3a';
         ctx.beginPath();
         ctx.moveTo(b.r * 2.4, 0);
         ctx.lineTo(-b.r * 1.2, b.r * 0.9);
         ctx.lineTo(-b.r * 1.2, -b.r * 0.9);
         ctx.closePath();
         ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#8f3d16';
+        ctx.lineWidth = 1;
+        ctx.stroke();
         ctx.restore();
       } else {
         ctx.fillStyle = '#ff5c5c';
