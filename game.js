@@ -624,6 +624,9 @@
       if (t >= 1) {
         boss.entering = false;
         boss.x = boss.baseX;
+        // 登場中に進んでいたtをリセットし、上下運動をy=playH/2から滑らかに始める
+        // （リセットしないと sin(boss.t*0.8) が既に大きく進んでいて、この瞬間にyが飛ぶ）
+        boss.t = 0;
       }
       return;
     }
