@@ -1494,17 +1494,57 @@
       const baseY = i * R * 0.16;
       if (isStriking) {
         const tip = squidTentacleTip(boss);
-        const localX = tip.x - boss.x;
-        const localY = tip.y - boss.y;
+        const sx = -R * 0.55, sy = baseY * 0.4;
+        const ex = tip.x - boss.x, ey = tip.y - boss.y;
+        // 制御点を根元寄りに置き、まっすぐな棒ではなく緩く曲がった足にする
+        const cxp = sx + (ex - sx) * 0.45;
+        const cyp = sy + (ey - sy) * 0.15;
+
+        // ベジェ上をサンプリングし、進行方向に対して垂直方向へうねりを加える
+        const SEG = 16;
+        const pts = [];
+        for (let s = 0; s <= SEG; s++) {
+          const u = s / SEG;
+          const bx = (1 - u) * (1 - u) * sx + 2 * (1 - u) * u * cxp + u * u * ex;
+          const by = (1 - u) * (1 - u) * sy + 2 * (1 - u) * u * cyp + u * u * ey;
+          const dx = 2 * (1 - u) * (cxp - sx) + 2 * u * (ex - cxp);
+          const dy = 2 * (1 - u) * (cyp - sy) + 2 * u * (ey - cyp);
+          const dl = Math.max(1, Math.hypot(dx, dy));
+          // 根元と先端は振れ幅を絞り、中央がよくうねるようにする
+          const wave = Math.sin(u * Math.PI * 2.2 - t * 9) * R * 0.13 * Math.sin(u * Math.PI);
+          pts.push({ x: bx - (dy / dl) * wave, y: by + (dx / dl) * wave, u });
+        }
+
         ctx.save();
-        ctx.strokeStyle = '#ff3a6e';
         ctx.shadowColor = '#ff3a6e';
-        ctx.shadowBlur = 10;
-        ctx.lineWidth = Math.max(4, R * 0.12);
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = '#ff3a6e';
+        // 根元を太く先端を細くして足らしいテーパーをつける
+        for (let s = 0; s < SEG; s++) {
+          const p = pts[s], q = pts[s + 1];
+          ctx.lineWidth = Math.max(2, R * 0.14 * (1 - p.u * 0.65));
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(q.x, q.y);
+          ctx.stroke();
+        }
+        // 先端の触腕鉤（イカの触腕は先だけ幅広くなる）
+        const tipPt = pts[SEG];
+        const prevPt = pts[SEG - 1];
+        ctx.translate(tipPt.x, tipPt.y);
+        ctx.rotate(Math.atan2(tipPt.y - prevPt.y, tipPt.x - prevPt.x));
+        ctx.fillStyle = '#ff3a6e';
         ctx.beginPath();
-        ctx.moveTo(-R * 0.55, baseY * 0.4);
-        ctx.quadraticCurveTo(localX * 0.5, baseY * 0.4 + (localY - baseY * 0.4) * 0.3, localX, localY);
-        ctx.stroke();
+        ctx.ellipse(-R * 0.1, 0, R * 0.2, R * 0.09, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 吸盤
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#7a1f3d';
+        for (let s = 0; s < 3; s++) {
+          ctx.beginPath();
+          ctx.arc(-R * 0.19 + s * R * 0.08, 0, R * 0.028, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
         continue;
       }
