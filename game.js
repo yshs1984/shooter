@@ -603,11 +603,30 @@
       lungeT: 0,
       lungeTimer: 2.5 + Math.random() * 1.5,
       entering: true,
-      enterT: 0
+      enterT: 0,
+      tentacleCooldown: 2.5,
+      tentacleActive: false,
+      tentacleT: 0,
+      tentacleIndex: 0,
+      tentacleTargetX: 0,
+      tentacleTargetY: 0
     };
     enemies = [];
     enemyBullets = [];
     volcano = null;
+  }
+
+  function squidTentacleTip(b) {
+    const R = b.r;
+    const baseY = b.tentacleIndex * R * 0.16;
+    const attachX = b.x - R * 0.55;
+    const attachY = b.y + baseY * 0.4;
+    const reach = Math.sin(Math.min(1, b.tentacleT) * Math.PI);
+    return {
+      x: attachX + (b.tentacleTargetX - attachX) * reach,
+      y: attachY + (b.tentacleTargetY - attachY) * reach,
+      reach
+    };
   }
 
   function updateBoss(dt) {
@@ -654,6 +673,27 @@
 
     // 海底に見た目上埋まらないよう浮上させる（当たり判定はなし）
     boss.y = Math.min(boss.y, terrainSurfaceY(boss.x) - boss.r);
+
+    // イカの触腕を伸ばす攻撃
+    if (boss.kind === 'squid') {
+      if (boss.tentacleActive) {
+        boss.tentacleT += dt / 0.9;
+        if (boss.tentacleT >= 1) {
+          boss.tentacleActive = false;
+          boss.tentacleT = 0;
+          boss.tentacleCooldown = 3.2 + Math.random() * 1.8;
+        }
+      } else {
+        boss.tentacleCooldown -= dt;
+        if (boss.tentacleCooldown <= 0) {
+          boss.tentacleActive = true;
+          boss.tentacleT = 0;
+          boss.tentacleIndex = Math.floor(Math.random() * 7) - 3;
+          boss.tentacleTargetX = player.x;
+          boss.tentacleTargetY = player.y;
+        }
+      }
+    }
 
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
@@ -936,6 +976,14 @@
     // ボス vs 自機（体当たり）
     if (boss && dist(boss.x, boss.y, player.x, player.y) < boss.r + player.hitRadius) {
       hitPlayer();
+    }
+
+    // イカの触腕 vs 自機
+    if (boss && boss.kind === 'squid' && boss.tentacleActive) {
+      const tip = squidTentacleTip(boss);
+      if (tip.reach > 0.5 && dist(tip.x, tip.y, player.x, player.y) < 14 + player.hitRadius) {
+        hitPlayer();
+      }
     }
   }
 
@@ -1440,11 +1488,28 @@
     const t = boss.t;
 
     // 触腕（波打ちながら前方＝左に伸びる）
-    ctx.strokeStyle = mantleColor;
-    ctx.lineWidth = Math.max(3, R * 0.09);
     ctx.lineCap = 'round';
     for (let i = -3; i <= 3; i++) {
+      const isStriking = boss.tentacleActive && boss.tentacleIndex === i;
       const baseY = i * R * 0.16;
+      if (isStriking) {
+        const tip = squidTentacleTip(boss);
+        const localX = tip.x - boss.x;
+        const localY = tip.y - boss.y;
+        ctx.save();
+        ctx.strokeStyle = '#ff3a6e';
+        ctx.shadowColor = '#ff3a6e';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = Math.max(4, R * 0.12);
+        ctx.beginPath();
+        ctx.moveTo(-R * 0.55, baseY * 0.4);
+        ctx.quadraticCurveTo(localX * 0.5, baseY * 0.4 + (localY - baseY * 0.4) * 0.3, localX, localY);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      ctx.strokeStyle = mantleColor;
+      ctx.lineWidth = Math.max(3, R * 0.09);
       const midX = -R * 1.1 + Math.sin(t * 2.4 + i) * R * 0.25;
       const midY = baseY + Math.cos(t * 2 + i) * R * 0.18;
       const endX = -R * 2.1 + Math.sin(t * 2.4 + i + 1) * R * 0.3;
