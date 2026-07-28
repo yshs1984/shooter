@@ -43,6 +43,12 @@
   let stageBannerTimer = 0;
   let stageBannerText = '';
 
+  // ---------- デバッグモード ----------
+  // URLに ?debug=1 が付いている場合のみ有効。通常プレイには一切影響しない。
+  const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
+  let debugInvincible = false;
+  let debugButtons = {};
+
   // ---------- 入力（画面下部の操作ボタン） ----------
   const controls = { up: false, down: false, left: false, right: false };
   const buttons = {
@@ -84,6 +90,18 @@
     pauseButton = { x: W - pbSize - 12, y: 12, w: pbSize, h: pbSize };
     const rbW = 170, rbH = 46;
     restartButton = { x: W / 2 - rbW / 2, y: H / 2 + 30, w: rbW, h: rbH };
+
+    if (DEBUG) {
+      // 操作パッドの右側の空きスペースに縦積みで配置する
+      const dw = 78, dh = 30, dgap = 6;
+      const dx = W - dw - 12;
+      const top = playH + (controlBarH - (dh * 3 + dgap * 2)) / 2;
+      debugButtons = {
+        stage: { x: dx, y: top, w: dw, h: dh, label: 'STAGE ▶' },
+        boss: { x: dx, y: top + dh + dgap, w: dw, h: dh, label: 'BOSS' },
+        invuln: { x: dx, y: top + (dh + dgap) * 2, w: dw, h: dh, label: 'MUTEKI' }
+      };
+    }
   }
 
   function localPos(clientX, clientY) {
@@ -120,8 +138,51 @@
     else if (state === STATE_PAUSED) state = STATE_PLAYING;
   }
 
+  // 次のステージへ即座に進む（最終ステージならクリア扱い）
+  function debugSkipStage() {
+    boss = null;
+    enemies = [];
+    enemyBullets = [];
+    volcano = null;
+    volcanoSpawned = false;
+    killCount = 0;
+    spawnTimer = Math.max(spawnTimer, 1.2);
+    if (currentStage < STAGE_BOSSES.length) {
+      currentStage += 1;
+      stageBannerTimer = 2.2;
+      stageBannerText = `STAGE ${currentStage}`;
+    } else {
+      state = STATE_CLEAR;
+    }
+  }
+
+  // 現在のステージのボスを即座に出現させる
+  function debugSpawnBoss() {
+    if (boss) return;
+    killCount = BOSS_KILL_THRESHOLD;
+    spawnBoss();
+  }
+
+  function handleDebugPointerDown(pos) {
+    if (!DEBUG || (state !== STATE_PLAYING && state !== STATE_PAUSED)) return false;
+    if (inRect(pos.x, pos.y, debugButtons.stage)) {
+      debugSkipStage();
+      return true;
+    }
+    if (inRect(pos.x, pos.y, debugButtons.boss)) {
+      debugSpawnBoss();
+      return true;
+    }
+    if (inRect(pos.x, pos.y, debugButtons.invuln)) {
+      debugInvincible = !debugInvincible;
+      return true;
+    }
+    return false;
+  }
+
   // ポーズ関連のボタンをタップした場合はtrueを返し、通常の入力処理（操作ボタン・スタート判定）を行わせない
   function handlePointerDown(pos) {
+    if (handleDebugPointerDown(pos)) return true;
     if (state === STATE_PLAYING && inRect(pos.x, pos.y, pauseButton)) {
       togglePause();
       return true;
@@ -196,6 +257,19 @@
     if (e.code === 'KeyP' || e.code === 'Escape') {
       e.preventDefault();
       togglePause();
+      return;
+    }
+    if (DEBUG && state === STATE_PLAYING) {
+      if (e.code === 'KeyN') {
+        e.preventDefault();
+        debugSkipStage();
+      } else if (e.code === 'KeyB') {
+        e.preventDefault();
+        debugSpawnBoss();
+      } else if (e.code === 'KeyI') {
+        e.preventDefault();
+        debugInvincible = !debugInvincible;
+      }
     }
   }
   function onKeyUp(e) {
@@ -782,6 +856,7 @@
   }
 
   function hitPlayer() {
+    if (DEBUG && debugInvincible) return;
     if (player.invuln > 0) return;
     if (player.shield) {
       player.shield = false;
@@ -1806,6 +1881,28 @@
     drawButton(buttons.down, '▼', controls.down);
     drawButton(buttons.left, '◀', controls.left);
     drawButton(buttons.right, '▶', controls.right);
+
+    if (DEBUG) drawDebugButtons();
+  }
+
+  function drawDebugButtons() {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const key of ['stage', 'boss', 'invuln']) {
+      const r = debugButtons[key];
+      const active = key === 'invuln' && debugInvincible;
+      ctx.fillStyle = active ? 'rgba(255,200,60,0.85)' : 'rgba(255,255,255,0.12)';
+      ctx.strokeStyle = 'rgba(255,200,60,0.7)';
+      ctx.lineWidth = 1.2;
+      roundRect(r.x, r.y, r.w, r.h, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = active ? '#3a2a00' : '#ffd76a';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(r.label, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   const ITEM_NAMES = { spread: '3-WAY', homing: 'HOMING', pierce: 'PIERCE', wide: 'WIDE' };
@@ -1819,6 +1916,12 @@
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = '13px sans-serif';
     ctx.fillText(`STAGE ${currentStage}/${STAGE_BOSSES.length}`, 12, 56);
+
+    if (DEBUG) {
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(debugInvincible ? 'DEBUG (MUTEKI)' : 'DEBUG', 12, 74);
+    }
 
     const badges = [];
     if (player.bulletType !== 'normal') {
