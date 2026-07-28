@@ -482,7 +482,12 @@
   }
 
   function spawnEnemyBullet(x, y, vx, vy, opts) {
-    enemyBullets.push({ x, y, vx, vy, r: (opts && opts.r) || 5, lava: !!(opts && opts.lava) });
+    enemyBullets.push({
+      x, y, vx, vy,
+      r: (opts && opts.r) || 5,
+      lava: !!(opts && opts.lava),
+      kind: (opts && opts.kind) || 'normal'
+    });
   }
 
   // ---------- 敵 ----------
@@ -544,7 +549,7 @@
         const dy = player.y - e.y;
         const len = Math.max(1, Math.hypot(dx, dy));
         const speed = 260;
-        spawnEnemyBullet(e.x, e.y, (dx / len) * speed, (dy / len) * speed);
+        spawnEnemyBullet(e.x, e.y, (dx / len) * speed, (dy / len) * speed, { r: 6, kind: 'spike' });
       }
     }
   }
@@ -704,6 +709,20 @@
         for (let i = 0; i < n; i++) {
           const a = (Math.PI * 2 * i) / n + boss.t;
           spawnEnemyBullet(boss.x, boss.y, Math.cos(a) * speed, Math.sin(a) * speed);
+        }
+      } else if (boss.kind === 'crab') {
+        boss.fireCooldown = 0.85;
+        const speed = 150;
+        const offsets = BOSS_FIRE_SPREAD.crab;
+        for (const dyOff of offsets) {
+          const dx = player.x - boss.x;
+          const dy = (player.y - boss.y) + dyOff;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          spawnEnemyBullet(
+            boss.x, boss.y,
+            (dx / len) * speed, (dy / len) * speed - 20,
+            { r: 7 + Math.random() * 4, kind: 'bubble' }
+          );
         }
       } else {
         boss.fireCooldown = 0.9;
@@ -1642,6 +1661,39 @@
         ctx.beginPath();
         ctx.arc(b.x, b.y, b.r * 0.45, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+      } else if (b.kind === 'bubble') {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.fillStyle = 'rgba(210,240,255,0.35)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, b.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath();
+        ctx.arc(-b.r * 0.35, -b.r * 0.35, b.r * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else if (b.kind === 'spike') {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.shadowColor = '#ffcf3a';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#ffcf3a';
+        ctx.beginPath();
+        ctx.moveTo(b.r * 2.4, 0);
+        ctx.lineTo(-b.r * 1.2, b.r * 0.9);
+        ctx.lineTo(-b.r * 1.2, -b.r * 0.9);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#8f3d16';
+        ctx.lineWidth = 1;
+        ctx.stroke();
         ctx.restore();
       } else {
         ctx.fillStyle = '#ff5c5c';
