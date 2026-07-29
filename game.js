@@ -669,18 +669,32 @@
   let whirlpoolSpawned = false;
   const WHIRLPOOL_STAGE = 2;
   const WHIRLPOOL_TRIGGER_KILLS = 10;
-  const WHIRLPOOL_SPIN_SPEED = 3.4;   // 捕まっている間の回転角速度(rad/s)
-  const WHIRLPOOL_PULL_SPEED = 46;    // 中心へ引き込まれる速さ(px/s)
-  const WHIRLPOOL_CORE_R = 16;        // これ以上は中心に寄らない
+  const WHIRLPOOL_SPIN_SPEED = 3.6;   // 捕まっている間の回転角速度(rad/s)
+  const WHIRLPOOL_SINK_SPEED = 76;    // 下へ引きずり込まれる速さ(px/s)
+  const WHIRLPOOL_TOP_R = 86;         // 漏斗の口の半径
+  const WHIRLPOOL_DEPTH = 210;        // 漏斗の深さ
 
   function spawnWhirlpool() {
     whirlpool = {
       x: W + 120,
-      y: playH * (0.3 + Math.random() * 0.4),
-      r: 92,
+      y: playH * 0.18 + Math.random() * playH * 0.12,  // 漏斗の口（上端）
+      r: WHIRLPOOL_TOP_R,
+      depth: WHIRLPOOL_DEPTH,
       vx: -46,
       t: 0
     };
+  }
+
+  // 漏斗の底（海底に埋まらないよう手前で止める）
+  function whirlpoolBottomY(wp) {
+    return Math.min(wp.y + wp.depth, terrainSurfaceY(wp.x) - 30);
+  }
+
+  // 深さに応じた漏斗の半径（下へ行くほど絞られる）
+  function whirlpoolRadiusAt(wp, y) {
+    const bottom = whirlpoolBottomY(wp);
+    const u = Math.max(0, Math.min(1, (y - wp.y) / Math.max(1, bottom - wp.y)));
+    return wp.r * (1 - u * 0.78);
   }
 
   function updateWhirlpool(dt) {
@@ -693,25 +707,28 @@
     }
   }
 
-  // 渦に入っている間は操作を奪い、中心へ巻き込みながらぐるぐる回す
+  // 渦に入っている間は操作を奪い、回転させながら下へ引きずり込む
   function applyWhirlpool(dt) {
     if (!whirlpool) {
       player.caught = false;
       return false;
     }
-    const dx = player.x - whirlpool.x;
-    const dy = player.y - whirlpool.y;
-    const d = Math.hypot(dx, dy);
-    if (d > whirlpool.r) {
+    const wp = whirlpool;
+    const bottom = whirlpoolBottomY(wp);
+    const dx = player.x - wp.x;
+    // 漏斗の内側（上端より少し上から底まで）にいるときだけ捕まる
+    if (player.y < wp.y - 24 || player.y > bottom + 12 ||
+        Math.abs(dx) > whirlpoolRadiusAt(wp, player.y) + 14) {
       player.caught = false;
       return false;
     }
 
     player.caught = true;
-    const angle = Math.atan2(dy, dx) + WHIRLPOOL_SPIN_SPEED * dt;
-    const radius = Math.max(WHIRLPOOL_CORE_R, d - WHIRLPOOL_PULL_SPEED * dt);
-    player.x = whirlpool.x + Math.cos(angle) * radius;
-    player.y = whirlpool.y + Math.sin(angle) * radius;
+    // 縦軸のまわりを回りながら沈んでいく
+    const newY = Math.min(bottom, Math.max(wp.y, player.y) + WHIRLPOOL_SINK_SPEED * dt);
+    const angle = Math.atan2(0, 1) + wp.t * WHIRLPOOL_SPIN_SPEED;
+    player.y = newY;
+    player.x = wp.x + Math.cos(angle) * whirlpoolRadiusAt(wp, newY);
     player.spin += WHIRLPOOL_SPIN_SPEED * dt;
     return true;
   }
@@ -1859,46 +1876,62 @@
     }
   }
 
+  // 下へ引きずり込む漏斗状の渦を描く
   function drawWhirlpool(wp) {
     const R = wp.r;
+    const bottom = whirlpoolBottomY(wp);
+    const depth = Math.max(1, bottom - wp.y);
+    const FLAT = 0.34;  // 上から見下ろした遠近感（楕円の潰し具合）
+
     ctx.save();
     ctx.translate(wp.x, wp.y);
-    ctx.rotate(wp.t * 1.6);
 
-    // 外周の暗い吸い込み部分
-    const grad = ctx.createRadialGradient(0, 0, R * 0.06, 0, 0, R);
-    grad.addColorStop(0, 'rgba(1,12,20,0.92)');
-    grad.addColorStop(0.55, 'rgba(6,40,60,0.5)');
-    grad.addColorStop(1, 'rgba(10,70,100,0)');
+    // 漏斗の内側（下へ向かって暗くなる縦グラデーション）
+    const grad = ctx.createLinearGradient(0, 0, 0, depth);
+    grad.addColorStop(0, 'rgba(8,52,74,0.35)');
+    grad.addColorStop(0.6, 'rgba(3,26,40,0.75)');
+    grad.addColorStop(1, 'rgba(0,6,12,0.95)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.moveTo(-R, 0);
+    ctx.lineTo(-R * 0.22, depth);
+    ctx.lineTo(R * 0.22, depth);
+    ctx.lineTo(R, 0);
+    ctx.ellipse(0, 0, R, R * FLAT, 0, 0, Math.PI, true);
+    ctx.closePath();
     ctx.fill();
 
-    // 渦を巻く水流（対数螺旋を数本重ねる）
+    // 口のふち
+    ctx.strokeStyle = 'rgba(190,235,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R, R * FLAT, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 内壁を回りながら落ちていく水流（螺旋を数本）
     ctx.lineCap = 'round';
-    const arms = 4;
+    const arms = 3;
     for (let a = 0; a < arms; a++) {
-      const phase = (Math.PI * 2 * a) / arms;
-      ctx.strokeStyle = `rgba(190,235,255,${0.16 + 0.1 * (a % 2)})`;
-      ctx.lineWidth = Math.max(2, R * 0.045);
+      const phase = (Math.PI * 2 * a) / arms - wp.t * 2.6;
+      ctx.strokeStyle = `rgba(200,240,255,${0.3 - a * 0.06})`;
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
-      for (let s = 0; s <= 40; s++) {
-        const u = s / 40;
-        const rr = R * (0.12 + u * 0.86);
-        const ang = phase + u * Math.PI * 1.9;
+      for (let s = 0; s <= 48; s++) {
+        const u = s / 48;
+        const rr = R * (1 - u * 0.78);
+        const ang = phase + u * Math.PI * 3.4;
         const px = Math.cos(ang) * rr;
-        const py = Math.sin(ang) * rr;
+        const py = u * depth + Math.sin(ang) * rr * FLAT;
         if (s === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
       ctx.stroke();
     }
 
-    // 中心の穴
-    ctx.fillStyle = 'rgba(0,6,12,0.95)';
+    // 底の暗い吸い込み口
+    ctx.fillStyle = 'rgba(0,4,10,0.95)';
     ctx.beginPath();
-    ctx.arc(0, 0, R * 0.13, 0, Math.PI * 2);
+    ctx.ellipse(0, depth, R * 0.22, R * 0.22 * FLAT, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
