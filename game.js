@@ -145,6 +145,9 @@
     enemyBullets = [];
     volcano = null;
     volcanoSpawned = false;
+    whirlpool = null;
+    whirlpoolSpawned = false;
+    player.caught = false;
     killCount = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
     if (currentStage < STAGE_BOSSES.length) {
@@ -451,7 +454,9 @@
     rapidFire: false,
     speedBoost: false,
     shield: false,
-    shieldPopTimer: 0
+    shieldPopTimer: 0,
+    spin: 0,
+    caught: false
   };
 
   function resetPlayer() {
@@ -464,6 +469,8 @@
     player.speedBoost = false;
     player.shield = false;
     player.shieldPopTimer = 0;
+    player.spin = 0;
+    player.caught = false;
   }
 
   function playerMinX() { return player.size + 4; }
@@ -657,6 +664,58 @@
     }
   }
 
+  // ---------- 渦（ステージ2で火山の代わりに出現する） ----------
+  let whirlpool = null;
+  let whirlpoolSpawned = false;
+  const WHIRLPOOL_STAGE = 2;
+  const WHIRLPOOL_TRIGGER_KILLS = 10;
+  const WHIRLPOOL_SPIN_SPEED = 3.4;   // 捕まっている間の回転角速度(rad/s)
+  const WHIRLPOOL_PULL_SPEED = 46;    // 中心へ引き込まれる速さ(px/s)
+  const WHIRLPOOL_CORE_R = 16;        // これ以上は中心に寄らない
+
+  function spawnWhirlpool() {
+    whirlpool = {
+      x: W + 120,
+      y: playH * (0.3 + Math.random() * 0.4),
+      r: 92,
+      vx: -46,
+      t: 0
+    };
+  }
+
+  function updateWhirlpool(dt) {
+    if (!whirlpool) return;
+    whirlpool.t += dt;
+    whirlpool.x += whirlpool.vx * dt;
+    if (whirlpool.x < -whirlpool.r * 1.6) {
+      whirlpool = null;
+      player.caught = false;
+    }
+  }
+
+  // 渦に入っている間は操作を奪い、中心へ巻き込みながらぐるぐる回す
+  function applyWhirlpool(dt) {
+    if (!whirlpool) {
+      player.caught = false;
+      return false;
+    }
+    const dx = player.x - whirlpool.x;
+    const dy = player.y - whirlpool.y;
+    const d = Math.hypot(dx, dy);
+    if (d > whirlpool.r) {
+      player.caught = false;
+      return false;
+    }
+
+    player.caught = true;
+    const angle = Math.atan2(dy, dx) + WHIRLPOOL_SPIN_SPEED * dt;
+    const radius = Math.max(WHIRLPOOL_CORE_R, d - WHIRLPOOL_PULL_SPEED * dt);
+    player.x = whirlpool.x + Math.cos(angle) * radius;
+    player.y = whirlpool.y + Math.sin(angle) * radius;
+    player.spin += WHIRLPOOL_SPIN_SPEED * dt;
+    return true;
+  }
+
   // ---------- ボス ----------
   let boss = null;
 
@@ -693,6 +752,8 @@
     enemies = [];
     enemyBullets = [];
     volcano = null;
+    whirlpool = null;
+    player.caught = false;
   }
 
   function squidTentacleTip(b) {
@@ -885,6 +946,8 @@
     boss = null;
     volcano = null;
     volcanoSpawned = false;
+    whirlpool = null;
+    whirlpoolSpawned = false;
     spawnTimer = 0;
     terrainOffset = 0;
     currentStage = 1;
@@ -908,16 +971,24 @@
     if (player.shieldPopTimer > 0) player.shieldPopTimer -= dt;
     updatePlayerBubbles(dt);
 
-    const MOVE_SPEED = player.speedBoost ? MOVE_SPEED_BOOST : MOVE_SPEED_NORMAL;
-    let mvx = 0, mvy = 0;
-    if (controls.up) mvy -= 1;
-    if (controls.down) mvy += 1;
-    if (controls.left) mvx -= 1;
-    if (controls.right) mvx += 1;
-    if (mvx !== 0 || mvy !== 0) {
-      const len = Math.hypot(mvx, mvy);
-      player.x += (mvx / len) * MOVE_SPEED * dt;
-      player.y += (mvy / len) * MOVE_SPEED * dt;
+    // 渦に捕まっている間は操作入力を無視する
+    if (!applyWhirlpool(dt)) {
+      const MOVE_SPEED = player.speedBoost ? MOVE_SPEED_BOOST : MOVE_SPEED_NORMAL;
+      let mvx = 0, mvy = 0;
+      if (controls.up) mvy -= 1;
+      if (controls.down) mvy += 1;
+      if (controls.left) mvx -= 1;
+      if (controls.right) mvx += 1;
+      if (mvx !== 0 || mvy !== 0) {
+        const len = Math.hypot(mvx, mvy);
+        player.x += (mvx / len) * MOVE_SPEED * dt;
+        player.y += (mvy / len) * MOVE_SPEED * dt;
+      }
+      // 渦から解放されたら傾きを戻す
+      if (player.spin !== 0) {
+        const back = Math.sign(player.spin) * Math.min(Math.abs(player.spin), 8 * dt);
+        player.spin -= back;
+      }
     }
     player.y = Math.max(player.size, Math.min(playH - player.size, player.y));
     player.x = Math.max(playerMinX(), Math.min(playerMaxX(), player.x));
@@ -973,11 +1044,18 @@
       for (const e of enemies) updateEnemy(e, dt);
       enemies = enemies.filter(e => e.x > -40 && !collidesTerrain(e.x, e.y, e.r));
 
-      if (!volcanoSpawned && killCount >= VOLCANO_TRIGGER_KILLS) {
+      // ステージ2では火山の代わりに渦が出現する
+      if (currentStage === WHIRLPOOL_STAGE) {
+        if (!whirlpoolSpawned && killCount >= WHIRLPOOL_TRIGGER_KILLS) {
+          whirlpoolSpawned = true;
+          spawnWhirlpool();
+        }
+      } else if (!volcanoSpawned && killCount >= VOLCANO_TRIGGER_KILLS) {
         volcanoSpawned = true;
         spawnVolcano();
       }
       updateVolcano(dt);
+      updateWhirlpool(dt);
 
       if (killCount >= BOSS_KILL_THRESHOLD) {
         spawnBoss();
@@ -1039,6 +1117,7 @@
           currentStage += 1;
           killCount = 0;
           volcanoSpawned = false;
+          whirlpoolSpawned = false;
           spawnTimer = Math.max(spawnTimer, 1.2);
           stageBannerTimer = 2.2;
           stageBannerText = `STAGE ${currentStage}`;
@@ -1086,6 +1165,7 @@
     if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) return;
     ctx.save();
     ctx.translate(player.x, player.y);
+    if (player.spin !== 0) ctx.rotate(player.spin);
 
     const s = player.size;
     const hullColor = '#4fd1ff';
@@ -1779,6 +1859,51 @@
     }
   }
 
+  function drawWhirlpool(wp) {
+    const R = wp.r;
+    ctx.save();
+    ctx.translate(wp.x, wp.y);
+    ctx.rotate(wp.t * 1.6);
+
+    // 外周の暗い吸い込み部分
+    const grad = ctx.createRadialGradient(0, 0, R * 0.06, 0, 0, R);
+    grad.addColorStop(0, 'rgba(1,12,20,0.92)');
+    grad.addColorStop(0.55, 'rgba(6,40,60,0.5)');
+    grad.addColorStop(1, 'rgba(10,70,100,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 渦を巻く水流（対数螺旋を数本重ねる）
+    ctx.lineCap = 'round';
+    const arms = 4;
+    for (let a = 0; a < arms; a++) {
+      const phase = (Math.PI * 2 * a) / arms;
+      ctx.strokeStyle = `rgba(190,235,255,${0.16 + 0.1 * (a % 2)})`;
+      ctx.lineWidth = Math.max(2, R * 0.045);
+      ctx.beginPath();
+      for (let s = 0; s <= 40; s++) {
+        const u = s / 40;
+        const rr = R * (0.12 + u * 0.86);
+        const ang = phase + u * Math.PI * 1.9;
+        const px = Math.cos(ang) * rr;
+        const py = Math.sin(ang) * rr;
+        if (s === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    // 中心の穴
+    ctx.fillStyle = 'rgba(0,6,12,0.95)';
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
   function drawVolcano(v) {
     ctx.save();
     ctx.translate(v.x, v.y);
@@ -2022,6 +2147,7 @@
     if (state === STATE_PLAYING || state === STATE_PAUSED) {
       drawTerrain();
       if (volcano) drawVolcano(volcano);
+      if (whirlpool) drawWhirlpool(whirlpool);
       drawEnemies();
       drawItems();
       drawBoss();
@@ -2076,4 +2202,5 @@
   initBubbles();
   resetPlayer();
   requestAnimationFrame(loop);
+
 })();
