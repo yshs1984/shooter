@@ -43,6 +43,17 @@
   let stageBannerTimer = 0;
   let stageBannerText = '';
 
+  // ---------- 潜航ステージ ----------
+  // ステージ3では途中で海底が途切れて大穴になり、そこへ潜ると縦スクロールに切り替わる。
+  const DIVE_STAGE = 3;
+  const DIVE_TRIGGER_KILLS = 10;   // この撃破数で大穴が近づいてくる
+  const DIVE_HOLE_WIDTH = 4000;    // 大穴の横幅（ワールド座標）
+  const DIVE_SPEED = 128;          // 潜航中の縦スクロール速度(px/s)
+  const DIVE_BOSS_DEPTH = 1300;    // この深さでボスが下から現れる
+  let diveMode = 'none';           // 'none' | 'opening' | 'diving'
+  let diveHole = null;             // { start } 大穴のワールド座標
+  let diveDepth = 0;
+
   // ---------- デバッグモード ----------
   // URLに ?debug=1 が付いている場合のみ有効。通常プレイには一切影響しない。
   const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
@@ -148,6 +159,7 @@
     whirlpool = null;
     whirlpoolSpawned = false;
     player.caught = false;
+    resetDive();
     killCount = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
     if (currentStage < STAGE_BOSSES.length) {
@@ -425,7 +437,44 @@
         mountain = Math.cos((t * Math.PI) / 2) ** 2 * peakH;
       }
     }
-    return rolling + jag + mountain;
+    return (rolling + jag + mountain) * holeMask(worldX);
+  }
+
+  // 大穴の内側では海底の高さを0にする（縁はなめらかに落として崖に見せる）
+  function holeMask(worldX) {
+    if (!diveHole) return 1;
+    const s = diveHole.start;
+    const e = s + DIVE_HOLE_WIDTH;
+    const edge = 110;
+    if (worldX <= s - edge || worldX >= e + edge) return 1;
+    if (worldX >= s && worldX <= e) return 0;
+    const d = worldX < s ? (s - worldX) / edge : (worldX - e) / edge;
+    return d * d;
+  }
+
+  // ---------- 潜航中の縦穴（左右の岩壁。当たり判定あり） ----------
+  // 深さ（ワールドY）から壁の食い込み量を決める決定的な関数
+  function caveInset(worldY, phase) {
+    const base =
+      44 +
+      Math.sin(worldY * 0.0052 + phase) * 26 +
+      Math.sin(worldY * 0.0131 + phase * 2.3) * 13;
+    const jag =
+      Math.abs(Math.sin(worldY * 0.075 + phase)) * 8 +
+      Math.abs(Math.sin(worldY * 0.19 + phase * 1.7)) * 4;
+    return base + jag;
+  }
+
+  function caveLeftAt(screenY) { return caveInset(screenY + diveDepth, 0); }
+  function caveRightAt(screenY) { return W - caveInset(screenY + diveDepth, 2.4); }
+
+  function collidesCave(x, y, r) {
+    return x - r < caveLeftAt(y) || x + r > caveRightAt(y);
+  }
+
+  // 潜航中かどうかで地形の当たり判定を切り替える
+  function collidesWorld(x, y, r) {
+    return diveMode === 'diving' ? collidesCave(x, y, r) : collidesTerrain(x, y, r);
   }
 
   // 画面座標xにおける海底の表面のy座標
@@ -438,6 +487,8 @@
   }
 
   function updateTerrain(dt) {
+    // 潜航中は横スクロールを止める（縦スクロールに切り替わるため）
+    if (diveMode === 'diving') return;
     terrainOffset += TERRAIN_SCROLL_SPEED * dt;
   }
 
@@ -474,7 +525,8 @@
   }
 
   function playerMinX() { return player.size + 4; }
-  function playerMaxX() { return W * 0.6; }
+  // 潜航中は縦穴の中を左右いっぱいに動けるようにする
+  function playerMaxX() { return diveMode === 'diving' ? W - player.size - 4 : W * 0.6; }
 
   // ---------- 潜水艦の気泡（艦尾から漏れる小さな泡） ----------
   let playerBubbles = [];
@@ -525,26 +577,31 @@
   const MOVE_SPEED_BOOST = 400;
 
   function spawnPlayerBullet() {
-    const x = player.x + player.size;
-    const y = player.y;
+    // 潜航中は下から来る敵に向けて真下へ撃つ
+    const aim = diveMode === 'diving' ? Math.PI / 2 : 0;
+    const ca = Math.cos(aim), sa = Math.sin(aim);
+    const x = player.x + player.size * ca;
+    const y = player.y + player.size * sa;
+    const push = (speed, a, rest) => {
+      const ang = aim + a;
+      playerBullets.push({
+        x, y,
+        vx: Math.cos(ang) * speed,
+        vy: Math.sin(ang) * speed,
+        ...rest
+      });
+    };
+
     if (player.bulletType === 'spread') {
-      const angles = [-0.28, 0, 0.28];
-      for (const a of angles) {
-        playerBullets.push({
-          x, y,
-          vx: Math.cos(a) * BULLET_SPEED,
-          vy: Math.sin(a) * BULLET_SPEED,
-          r: 4, type: 'spread'
-        });
-      }
+      for (const a of [-0.28, 0, 0.28]) push(BULLET_SPEED, a, { r: 4, type: 'spread' });
     } else if (player.bulletType === 'homing') {
-      playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 5, type: 'homing', homing: true });
+      push(BULLET_SPEED, 0, { r: 5, type: 'homing', homing: true });
     } else if (player.bulletType === 'pierce') {
-      playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 5, type: 'pierce', pierce: true });
+      push(BULLET_SPEED, 0, { r: 5, type: 'pierce', pierce: true });
     } else if (player.bulletType === 'wide') {
-      playerBullets.push({ x, y, vx: BULLET_SPEED * 0.85, vy: 0, r: 10, type: 'wide' });
+      push(BULLET_SPEED * 0.85, 0, { r: 10, type: 'wide' });
     } else {
-      playerBullets.push({ x, y, vx: BULLET_SPEED, vy: 0, r: 4, type: 'normal' });
+      push(BULLET_SPEED, 0, { r: 4, type: 'normal' });
     }
   }
 
@@ -611,6 +668,13 @@
   }
 
   function updateEnemy(e, dt) {
+    if (e.type === 'riser') {
+      // 縦穴を左右に揺れながら浮上してくる
+      e.t += dt;
+      e.y += e.vy * dt;
+      e.x = e.baseX + Math.sin(e.t * e.freq) * e.amp;
+      return;
+    }
     if (e.type === 'straight') {
       // 前後・上下に小さく揺れながら群れで泳ぐ
       e.t += dt;
@@ -733,6 +797,64 @@
     return true;
   }
 
+  // ---------- 潜航ステージの進行 ----------
+  function resetDive() {
+    diveMode = 'none';
+    diveHole = null;
+    diveDepth = 0;
+  }
+
+  function updateDive(dt) {
+    if (diveMode === 'none') {
+      if (killCount >= DIVE_TRIGGER_KILLS) {
+        // 画面の右外から大穴が近づいてくる
+        diveHole = { start: terrainOffset + W + 240 };
+        diveMode = 'opening';
+        stageBannerTimer = 2.2;
+        stageBannerText = 'THE ABYSS';
+      }
+      return;
+    }
+
+    if (diveMode === 'opening') {
+      // 画面全体が大穴の上に来たら縦スクロールへ切り替える
+      if (terrainOffset > diveHole.start + 60) {
+        diveMode = 'diving';
+        diveDepth = 0;
+        enemies = [];
+        enemyBullets = [];
+        volcano = null;
+        spawnTimer = 1.2;
+        // 切り替えた瞬間に岩壁へめり込んで被弾しないよう、縦穴の中央へ移す
+        player.x = W / 2;
+        player.y = playH * 0.36;
+        player.invuln = Math.max(player.invuln, 1.2);
+        stageBannerTimer = 2.0;
+        stageBannerText = 'DIVE!';
+      }
+      return;
+    }
+
+    // diving: 縦スクロール
+    diveDepth += DIVE_SPEED * dt;
+  }
+
+  // 潜航中に下から浮上してくる敵
+  function spawnDiveEnemy() {
+    const margin = 46;
+    const x = margin + Math.random() * (W - margin * 2);
+    enemies.push({
+      type: 'riser',
+      x, baseX: x,
+      y: playH + 30,
+      vy: -(120 + Math.random() * 70),
+      t: Math.random() * Math.PI * 2,
+      amp: 18 + Math.random() * 26,
+      freq: 1.4 + Math.random(),
+      r: 14, hp: 1, score: 20
+    });
+  }
+
   // ---------- ボス ----------
   let boss = null;
 
@@ -743,12 +865,15 @@
 
   function spawnBoss() {
     const def = STAGE_BOSSES[currentStage - 1];
-    const baseX = W - 140;
+    // 潜航中は縦穴の底から浮上して登場する
+    const fromBelow = diveMode === 'diving';
+    const baseX = fromBelow ? W / 2 : W - 140;
     boss = {
       kind: def.kind,
-      x: W + 80,
+      fromBelow,
+      x: fromBelow ? baseX : W + 80,
       baseX,
-      y: playH / 2,
+      y: fromBelow ? playH + 120 : playH / 2,
       r: 46,
       hp: def.hp,
       maxHp: def.hp,
@@ -790,13 +915,18 @@
     if (!boss) return;
     boss.t += dt;
 
-    // 画面後方から自然に泳いで登場する
+    // 画面後方（潜航中は縦穴の底）から自然に泳いで登場する
     if (boss.entering) {
       boss.enterT += dt / 1.4;
       const t = Math.min(1, boss.enterT);
       const eased = 1 - Math.pow(1 - t, 3);
-      boss.x = (W + 80) + (boss.baseX - (W + 80)) * eased;
-      boss.y = playH / 2;
+      if (boss.fromBelow) {
+        boss.x = boss.baseX;
+        boss.y = (playH + 120) + (playH / 2 - (playH + 120)) * eased;
+      } else {
+        boss.x = (W + 80) + (boss.baseX - (W + 80)) * eased;
+        boss.y = playH / 2;
+      }
       if (t >= 1) {
         boss.entering = false;
         boss.x = boss.baseX;
@@ -807,7 +937,9 @@
       return;
     }
 
-    boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
+    if (!boss.fromBelow) {
+      boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
+    }
 
     // 前方への突進（ブロック崩しのボスが突っ込んでくる動きと同じ考え方）
     if (boss.lunging) {
@@ -824,12 +956,21 @@
         boss.lungeT = 0;
       }
     }
-    const lungeDepth = boss.baseX - 100;
-    const lungeOffset = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * lungeDepth : 0;
-    boss.x = boss.baseX - lungeOffset;
+    if (boss.fromBelow) {
+      // 縦穴では下半分を左右に泳ぎ、突進は上方向（自機がいる側）へ行う
+      const lungeUp = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * (playH * 0.3) : 0;
+      boss.y = playH * 0.66 + Math.sin(boss.t * 0.8) * (playH * 0.1) - lungeUp;
+      boss.x = boss.baseX + Math.sin(boss.t * 0.5) * (W * 0.24);
+    } else {
+      const lungeDepth = boss.baseX - 100;
+      const lungeOffset = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * lungeDepth : 0;
+      boss.x = boss.baseX - lungeOffset;
+    }
 
-    // 海底に見た目上埋まらないよう浮上させる（当たり判定はなし）
-    boss.y = Math.min(boss.y, terrainSurfaceY(boss.x) - boss.r);
+    // 海底に見た目上埋まらないよう浮上させる（当たり判定はなし。縦穴には海底がないので対象外）
+    if (diveMode !== 'diving') {
+      boss.y = Math.min(boss.y, terrainSurfaceY(boss.x) - boss.r);
+    }
 
     // イカの触腕を伸ばす攻撃
     if (boss.kind === 'squid') {
@@ -965,6 +1106,7 @@
     volcanoSpawned = false;
     whirlpool = null;
     whirlpoolSpawned = false;
+    resetDive();
     spawnTimer = 0;
     terrainOffset = 0;
     currentStage = 1;
@@ -1010,8 +1152,15 @@
     player.y = Math.max(player.size, Math.min(playH - player.size, player.y));
     player.x = Math.max(playerMinX(), Math.min(playerMaxX(), player.x));
 
-    // 海底との当たり判定
-    if (collidesTerrain(player.x, player.y, player.hitRadius)) {
+    // 地形との当たり判定（潜航中は縦穴の左右の岩壁）
+    if (diveMode === 'diving') {
+      if (collidesCave(player.x, player.y, player.hitRadius)) {
+        hitPlayer();
+        const l = caveLeftAt(player.y) + player.hitRadius;
+        const r = caveRightAt(player.y) - player.hitRadius;
+        player.x = Math.max(l, Math.min(r, player.x));
+      }
+    } else if (collidesTerrain(player.x, player.y, player.hitRadius)) {
       hitPlayer();
       player.y = terrainSurfaceY(player.x) - player.hitRadius;
     }
@@ -1041,7 +1190,7 @@
       b.y += b.vy * dt;
     }
     playerBullets = playerBullets.filter(b =>
-      b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20 && !collidesTerrain(b.x, b.y, b.r)
+      b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20 && !collidesWorld(b.x, b.y, b.r)
     );
 
     for (const b of enemyBullets) {
@@ -1049,24 +1198,33 @@
       b.y += b.vy * dt;
     }
     enemyBullets = enemyBullets.filter(b =>
-      b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20 && !collidesTerrain(b.x, b.y, b.r)
+      b.x > -20 && b.x < W + 20 && b.y > -20 && b.y < playH + 20 && !collidesWorld(b.x, b.y, b.r)
     );
 
     if (!boss) {
       spawnTimer -= dt;
       if (spawnTimer <= 0) {
-        spawnTimer = spawnInterval;
-        spawnEnemy();
+        if (diveMode === 'diving') {
+          spawnTimer = 0.9;
+          spawnDiveEnemy();
+        } else {
+          spawnTimer = spawnInterval;
+          spawnEnemy();
+        }
       }
       for (const e of enemies) updateEnemy(e, dt);
-      enemies = enemies.filter(e => e.x > -40 && !collidesTerrain(e.x, e.y, e.r));
+      enemies = enemies.filter(e =>
+        e.x > -40 && e.y > -60 && e.y < playH + 80 && !collidesWorld(e.x, e.y, e.r)
+      );
 
-      // ステージ2では火山の代わりに渦が出現する
+      // ステージごとの障害（ステージ2は渦、ステージ3は大穴＝潜航、その他は火山）
       if (currentStage === WHIRLPOOL_STAGE) {
         if (!whirlpoolSpawned && killCount >= WHIRLPOOL_TRIGGER_KILLS) {
           whirlpoolSpawned = true;
           spawnWhirlpool();
         }
+      } else if (currentStage === DIVE_STAGE) {
+        updateDive(dt);
       } else if (!volcanoSpawned && killCount >= VOLCANO_TRIGGER_KILLS) {
         volcanoSpawned = true;
         spawnVolcano();
@@ -1074,7 +1232,12 @@
       updateVolcano(dt);
       updateWhirlpool(dt);
 
-      if (killCount >= BOSS_KILL_THRESHOLD) {
+      // 潜航ステージでは撃破数ではなく到達した深さでボスが現れる
+      if (currentStage === DIVE_STAGE) {
+        if (diveMode === 'diving' && diveDepth >= DIVE_BOSS_DEPTH) {
+          spawnBoss();
+        }
+      } else if (killCount >= BOSS_KILL_THRESHOLD) {
         spawnBoss();
       }
     } else {
@@ -1135,6 +1298,7 @@
           killCount = 0;
           volcanoSpawned = false;
           whirlpoolSpawned = false;
+          resetDive();
           spawnTimer = Math.max(spawnTimer, 1.2);
           stageBannerTimer = 2.2;
           stageBannerText = `STAGE ${currentStage}`;
@@ -1482,7 +1646,8 @@
 
   function drawEnemies() {
     for (const e of enemies) {
-      if (e.type === 'sine') drawJellyEnemy(e);
+      // 浮上してくる敵はクラゲの見た目を流用する（上へ漂う動きと合う）
+      if (e.type === 'sine' || e.type === 'riser') drawJellyEnemy(e);
       else if (e.type === 'shooter') drawSpikyEnemy(e);
       else drawFishEnemy(e);
     }
@@ -2074,6 +2239,10 @@
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = '13px sans-serif';
     ctx.fillText(`STAGE ${currentStage}/${STAGE_BOSSES.length}`, 12, 56);
+    if (diveMode === 'diving') {
+      ctx.fillStyle = '#9fe6ff';
+      ctx.fillText(`DEPTH ${Math.floor(diveDepth)}m`, 90, 56);
+    }
 
     if (DEBUG) {
       ctx.fillStyle = '#ffd76a';
@@ -2158,6 +2327,54 @@
     drawButton(restartButton, 'RESTART', false);
   }
 
+  // 潜るほど暗くなる深海の闇
+  function drawDepthDarkness() {
+    const k = Math.min(0.72, diveDepth / 2600);
+    ctx.fillStyle = `rgba(0,8,16,${k})`;
+    ctx.fillRect(0, 0, W, playH);
+  }
+
+  // 潜航中の縦穴（左右の岩壁）
+  function drawCaveWalls() {
+    const step = 5;
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0, '#233a30');
+    grad.addColorStop(0.5, '#0c1a14');
+    grad.addColorStop(1, '#233a30');
+
+    ctx.fillStyle = grad;
+    // 左の壁
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (let sy = 0; sy <= playH; sy += step) ctx.lineTo(caveLeftAt(sy), sy);
+    ctx.lineTo(0, playH);
+    ctx.closePath();
+    ctx.fill();
+    // 右の壁
+    ctx.beginPath();
+    ctx.moveTo(W, 0);
+    for (let sy = 0; sy <= playH; sy += step) ctx.lineTo(caveRightAt(sy), sy);
+    ctx.lineTo(W, playH);
+    ctx.closePath();
+    ctx.fill();
+
+    // 壁面のハイライト
+    ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let sy = 0; sy <= playH; sy += step) {
+      const x = caveLeftAt(sy);
+      if (sy === 0) ctx.moveTo(x, sy); else ctx.lineTo(x, sy);
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    for (let sy = 0; sy <= playH; sy += step) {
+      const x = caveRightAt(sy);
+      if (sy === 0) ctx.moveTo(x, sy); else ctx.lineTo(x, sy);
+    }
+    ctx.stroke();
+  }
+
   function drawCenterText(lines) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(0, 0, W, H);
@@ -2178,7 +2395,12 @@
     drawOceanBackground();
 
     if (state === STATE_PLAYING || state === STATE_PAUSED) {
-      drawTerrain();
+      if (diveMode === 'diving') {
+        drawDepthDarkness();
+        drawCaveWalls();
+      } else {
+        drawTerrain();
+      }
       if (volcano) drawVolcano(volcano);
       if (whirlpool) drawWhirlpool(whirlpool);
       drawEnemies();
