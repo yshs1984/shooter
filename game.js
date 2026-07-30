@@ -504,7 +504,7 @@
     bulletType: 'normal',
     rapidFire: false,
     speedBoost: false,
-    shield: false,
+    shieldHp: 0,
     shieldPopTimer: 0,
     spin: 0,
     caught: false
@@ -518,7 +518,7 @@
     player.bulletType = 'normal';
     player.rapidFire = false;
     player.speedBoost = false;
-    player.shield = false;
+    player.shieldHp = 0;
     player.shieldPopTimer = 0;
     player.spin = 0;
     player.caught = false;
@@ -1034,6 +1034,7 @@
   // ---------- アイテム ----------
   let items = [];
   const ITEM_DROP_CHANCE = 0.22;
+  const SHIELD_MAX_HITS = 2;  // バリアが耐えられる被弾回数
   const BULLET_ITEM_TYPES = ['spread', 'homing', 'pierce', 'wide'];
   const ITEM_TYPES = [...BULLET_ITEM_TYPES, 'rapid', 'speed', 'shield', 'heal', 'escort'];
 
@@ -1050,7 +1051,7 @@
     } else if (type === 'speed') {
       player.speedBoost = true;
     } else if (type === 'shield') {
-      player.shield = true;
+      player.shieldHp = SHIELD_MAX_HITS;
     } else if (type === 'heal') {
       lives = Math.min(lives + 1, MAX_LIVES);
     } else if (type === 'escort') {
@@ -1124,10 +1125,11 @@
   function hitPlayer() {
     if (DEBUG && debugInvincible) return;
     if (player.invuln > 0) return;
-    if (player.shield) {
-      player.shield = false;
-      player.shieldPopTimer = 0.4;
+    if (player.shieldHp > 0) {
+      // バリアは規定回数ぶん被弾を肩代わりし、尽きた時だけ消滅演出を出す
+      player.shieldHp -= 1;
       player.invuln = 0.6;
+      if (player.shieldHp === 0) player.shieldPopTimer = 0.4;
       return;
     }
     lives -= 1;
@@ -1520,21 +1522,33 @@
 
   function drawShieldEffect() {
     const s = player.size;
-    if (player.shield) {
+    if (player.shieldHp > 0) {
+      // 残り回数が多いほど厚く明るいリングにして、消耗が分かるようにする
+      const full = player.shieldHp >= SHIELD_MAX_HITS;
       const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4);
+      const r = s * 1.7 + pulse * 2;
       ctx.save();
       ctx.translate(player.x, player.y);
       ctx.shadowColor = '#66e0c8';
-      ctx.shadowBlur = 10 + pulse * 8;
-      ctx.strokeStyle = `rgba(102,224,200,${0.55 + pulse * 0.25})`;
-      ctx.lineWidth = 2.5;
+      ctx.shadowBlur = (full ? 10 : 6) + pulse * 8;
+      ctx.strokeStyle = `rgba(102,224,200,${(full ? 0.55 : 0.35) + pulse * 0.25})`;
+      ctx.lineWidth = full ? 3 : 1.8;
       ctx.beginPath();
-      ctx.arc(0, 0, s * 1.7 + pulse * 2, 0, Math.PI * 2);
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(102,224,200,0.08)';
+      ctx.fillStyle = `rgba(102,224,200,${full ? 0.08 : 0.04})`;
       ctx.beginPath();
-      ctx.arc(0, 0, s * 1.7 + pulse * 2, 0, Math.PI * 2);
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.fill();
+      // 満タンのときは内側にもう一重
+      if (full) {
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = `rgba(102,224,200,${0.3 + pulse * 0.2})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(0, 0, r - 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       ctx.restore();
     }
     if (player.shieldPopTimer > 0) {
@@ -2370,7 +2384,7 @@
     }
     if (player.rapidFire) badges.push({ text: 'RAPID', color: ITEM_COLORS.rapid });
     if (player.speedBoost) badges.push({ text: 'SPEED', color: ITEM_COLORS.speed });
-    if (player.shield) badges.push({ text: 'SHIELD', color: ITEM_COLORS.shield });
+    if (player.shieldHp > 0) badges.push({ text: `SHIELD x${player.shieldHp}`, color: ITEM_COLORS.shield });
     if (escorts.length) badges.push({ text: `ESCORT x${escorts.length}`, color: ITEM_COLORS.escort });
 
     // デバッグ表示があるぶんバッジ行を下げて重ならないようにする
