@@ -30,7 +30,7 @@
   let lives = 3;
   let elapsed = 0;
   let killCount = 0;
-  const BOSS_KILL_THRESHOLD = 20;
+  const BOSS_KILL_THRESHOLD = 30;
   const MAX_LIVES = 5;
 
   // ---------- 面構成 ----------
@@ -46,10 +46,10 @@
   // ---------- 潜航ステージ ----------
   // ステージ3では途中で海底が途切れて大穴になり、そこへ潜ると縦スクロールに切り替わる。
   const DIVE_STAGE = 3;
-  const DIVE_TRIGGER_KILLS = 10;   // この撃破数で大穴が近づいてくる
+  const DIVE_TRIGGER_KILLS = 14;   // この撃破数で大穴が近づいてくる
   const DIVE_HOLE_WIDTH = 4000;    // 大穴の横幅（ワールド座標）
   const DIVE_SPEED = 128;          // 潜航中の縦スクロール速度(px/s)
-  const DIVE_BOSS_DEPTH = 1300;    // この深さでボスが下から現れる
+  const DIVE_BOSS_DEPTH = 2000;    // この深さでボスが下から現れる
   let diveMode = 'none';           // 'none' | 'opening' | 'diving'
   let diveHole = null;             // { start } 大穴のワールド座標
   let diveDepth = 0;
@@ -702,7 +702,7 @@
   // ---------- 火山 ----------
   let volcano = null;
   let volcanoSpawned = false;
-  const VOLCANO_TRIGGER_KILLS = 10;
+  const VOLCANO_TRIGGER_KILLS = 14;
 
   function spawnVolcano() {
     volcano = {
@@ -732,7 +732,7 @@
   let whirlpool = null;
   let whirlpoolSpawned = false;
   const WHIRLPOOL_STAGE = 2;
-  const WHIRLPOOL_TRIGGER_KILLS = 10;
+  const WHIRLPOOL_TRIGGER_KILLS = 14;
   const WHIRLPOOL_SPIN_SPEED = 3.6;   // 捕まっている間の回転角速度(rad/s)
   const WHIRLPOOL_SINK_SPEED = 76;    // 下へ引きずり込まれる速さ(px/s)
   const WHIRLPOOL_TOP_R = 86;         // 漏斗の口の半径
