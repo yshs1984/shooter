@@ -1035,7 +1035,7 @@
   let items = [];
   const ITEM_DROP_CHANCE = 0.22;
   const BULLET_ITEM_TYPES = ['spread', 'homing', 'pierce', 'wide'];
-  const ITEM_TYPES = [...BULLET_ITEM_TYPES, 'rapid', 'speed', 'shield', 'heal'];
+  const ITEM_TYPES = [...BULLET_ITEM_TYPES, 'rapid', 'speed', 'shield', 'heal', 'escort'];
 
   function spawnItem(x, y) {
     const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
@@ -1053,6 +1053,53 @@
       player.shield = true;
     } else if (type === 'heal') {
       lives = Math.min(lives + 1, MAX_LIVES);
+    } else if (type === 'escort') {
+      spawnEscort();
+    }
+  }
+
+  // ---------- 味方の小型潜水艦（護衛機） ----------
+  let escorts = [];
+  const ESCORT_MAX = 2;
+  const ESCORT_FIRE_INTERVAL = 0.55;
+
+  function spawnEscort() {
+    if (escorts.length >= ESCORT_MAX) return;
+    // 1機目はランダムな側、2機目は反対側に付ける
+    const slot = escorts.length === 0
+      ? (Math.random() < 0.5 ? -1 : 1)
+      : -escorts[0].slot;
+    escorts.push({
+      x: player.x, y: player.y + slot * 40,
+      slot, size: 11, hitRadius: 9,
+      fireCooldown: Math.random() * ESCORT_FIRE_INTERVAL,
+      t: 0
+    });
+  }
+
+  function updateEscorts(dt) {
+    for (const e of escorts) {
+      e.t += dt;
+      // 追従目標（潜航中は左右に、通常時は上下に並ぶ）
+      const wobble = Math.sin(e.t * 2.2) * 4;
+      const tx = diveMode === 'diving' ? player.x + e.slot * 40 + wobble : player.x - 26;
+      const ty = diveMode === 'diving' ? player.y - 26 : player.y + e.slot * 40 + wobble;
+      const k = Math.min(1, dt * 5.5);
+      e.x += (tx - e.x) * k;
+      e.y += (ty - e.y) * k;
+
+      e.fireCooldown -= dt;
+      if (e.fireCooldown <= 0) {
+        e.fireCooldown = ESCORT_FIRE_INTERVAL;
+        const aim = diveMode === 'diving' ? Math.PI / 2 : 0;
+        playerBullets.push({
+          x: e.x + Math.cos(aim) * e.size,
+          y: e.y + Math.sin(aim) * e.size,
+          vx: Math.cos(aim) * BULLET_SPEED * 0.95,
+          vy: Math.sin(aim) * BULLET_SPEED * 0.95,
+          r: 3, type: 'escort'
+        });
+      }
     }
   }
 
@@ -1101,6 +1148,7 @@
     playerBullets = [];
     enemyBullets = [];
     items = [];
+    escorts = [];
     boss = null;
     volcano = null;
     volcanoSpawned = false;
@@ -1272,6 +1320,7 @@
     }
     enemies = enemies.filter(e => !e.dead);
     updateItems(dt);
+    updateEscorts(dt);
 
     // 自機弾 vs ボス
     if (boss) {
@@ -1339,9 +1388,73 @@
         hitPlayer();
       }
     }
+
+    // 護衛機は被弾すると失われる（自機の盾としても機能する）
+    if (escorts.length) {
+      for (const e of escorts) {
+        for (const b of enemyBullets) {
+          if (b.hit) continue;
+          if (dist(b.x, b.y, e.x, e.y) < b.r + e.hitRadius) {
+            b.hit = true;
+            e.dead = true;
+          }
+        }
+        for (const en of enemies) {
+          if (en.dead) continue;
+          if (dist(en.x, en.y, e.x, e.y) < en.r + e.hitRadius) {
+            en.dead = true;
+            e.dead = true;
+          }
+        }
+        if (boss && dist(boss.x, boss.y, e.x, e.y) < boss.r + e.hitRadius) {
+          e.dead = true;
+        }
+      }
+      enemyBullets = enemyBullets.filter(b => !b.hit);
+      enemies = enemies.filter(en => !en.dead);
+      escorts = escorts.filter(e => !e.dead);
+    }
   }
 
   // ---------- 描画 ----------
+  // 護衛機（自機のミニチュア版。味方と分かるよう緑寄りの色にする）
+  function drawEscorts() {
+    for (const e of escorts) {
+      const s = e.size;
+      const aim = diveMode === 'diving' ? Math.PI / 2 : 0;
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(aim);
+
+      ctx.fillStyle = '#7ef0c0';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, s * 1.15, s * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // 艦尾フィン
+      ctx.beginPath();
+      ctx.moveTo(-s * 1.05, -s * 0.15);
+      ctx.lineTo(-s * 1.5, -s * 0.5);
+      ctx.lineTo(-s * 0.85, -s * 0.05);
+      ctx.closePath();
+      ctx.fill();
+      // セイル
+      ctx.fillStyle = '#2fa583';
+      roundRect(-s * 0.25, -s * 0.95, s * 0.5, s * 0.5, 3);
+      ctx.fill();
+      // 発射口
+      roundRect(s * 0.8, -s * 0.18, s * 0.5, s * 0.36, 2);
+      ctx.fill();
+      // 舷窓
+      ctx.fillStyle = '#eafff7';
+      for (const ox of [-s * 0.3, s * 0.15]) {
+        ctx.beginPath();
+        ctx.arc(ox, 0, s * 0.11, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
   function drawPlayer() {
     if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) return;
     ctx.save();
@@ -1974,7 +2087,7 @@
 
   const BULLET_COLORS = {
     normal: '#e8ffff', spread: '#8bffb0', homing: '#ff6fd8',
-    pierce: '#ffd166', wide: '#5ad1ff'
+    pierce: '#ffd166', wide: '#5ad1ff', escort: '#7ef0c0'
   };
 
   function drawBullets() {
@@ -2137,11 +2250,12 @@
 
   const ITEM_COLORS = {
     spread: '#8bffb0', homing: '#ff6fd8', pierce: '#ffd166', wide: '#5ad1ff',
-    rapid: '#ff9f45', speed: '#a685ff', shield: '#66e0c8', heal: '#ff8fa3'
+    rapid: '#ff9f45', speed: '#a685ff', shield: '#66e0c8', heal: '#ff8fa3',
+    escort: '#7ef0c0'
   };
   const ITEM_LABELS = {
     spread: '3', homing: 'H', pierce: 'P', wide: 'W',
-    rapid: 'R', speed: 'M', shield: 'B', heal: '+'
+    rapid: 'R', speed: 'M', shield: 'B', heal: '+', escort: 'A'
   };
 
   function drawItems() {
@@ -2257,12 +2371,15 @@
     if (player.rapidFire) badges.push({ text: 'RAPID', color: ITEM_COLORS.rapid });
     if (player.speedBoost) badges.push({ text: 'SPEED', color: ITEM_COLORS.speed });
     if (player.shield) badges.push({ text: 'SHIELD', color: ITEM_COLORS.shield });
+    if (escorts.length) badges.push({ text: `ESCORT x${escorts.length}`, color: ITEM_COLORS.escort });
 
+    // デバッグ表示があるぶんバッジ行を下げて重ならないようにする
+    const badgeY = DEBUG ? 94 : 76;
     let bx = 12;
     ctx.font = '14px sans-serif';
     for (const b of badges) {
       ctx.fillStyle = b.color;
-      ctx.fillText(b.text, bx, 76);
+      ctx.fillText(b.text, bx, badgeY);
       bx += ctx.measureText(b.text).width + 14;
     }
   }
@@ -2408,6 +2525,7 @@
       drawBoss();
       drawBullets();
       drawPlayerBubbles();
+      drawEscorts();
       drawShieldEffect();
       drawPlayer();
       drawHud();
