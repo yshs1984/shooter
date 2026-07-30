@@ -49,10 +49,12 @@
   const DIVE_TRIGGER_KILLS = 14;   // この撃破数で大穴が近づいてくる
   const DIVE_HOLE_WIDTH = 4000;    // 大穴の横幅（ワールド座標）
   const DIVE_SPEED = 128;          // 潜航中の縦スクロール速度(px/s)
-  const DIVE_BOSS_DEPTH = 2000;    // この深さでボスが下から現れる
-  let diveMode = 'none';           // 'none' | 'opening' | 'diving'
+  const DIVE_BOTTOM_DEPTH = 2000;  // この深さまで潜ると縦穴を抜けて再び横スクロールになる
+  const DEEP_BOSS_DELAY = 3.2;     // 横スクロールに戻ってからボスが現れるまでの秒数
+  let diveMode = 'none';           // 'none' | 'opening' | 'diving' | 'deep'
   let diveHole = null;             // { start } 大穴のワールド座標
   let diveDepth = 0;
+  let deepTimer = 0;
 
   // ---------- デバッグモード ----------
   // URLに ?debug=1 が付いている場合のみ有効。通常プレイには一切影響しない。
@@ -802,6 +804,7 @@
     diveMode = 'none';
     diveHole = null;
     diveDepth = 0;
+    deepTimer = 0;
   }
 
   function updateDive(dt) {
@@ -835,8 +838,29 @@
       return;
     }
 
-    // diving: 縦スクロール
-    diveDepth += DIVE_SPEED * dt;
+    if (diveMode === 'diving') {
+      diveDepth += DIVE_SPEED * dt;
+      // 縦穴の底まで潜りきったら、深海を進む横スクロールへ戻す
+      if (diveDepth >= DIVE_BOTTOM_DEPTH) {
+        diveMode = 'deep';
+        deepTimer = DEEP_BOSS_DELAY;
+        diveHole = null;          // 海底が戻る
+        enemies = [];
+        enemyBullets = [];
+        spawnTimer = 1.2;
+        // 横スクロール時の定位置へ戻し、地形にめり込まないようにする
+        player.x = Math.max(60, W * 0.15);
+        player.y = playH / 2;
+        player.spin = 0;
+        player.invuln = Math.max(player.invuln, 1.2);
+        stageBannerTimer = 2.2;
+        stageBannerText = 'SEA FLOOR';
+      }
+      return;
+    }
+
+    // deep: 深海を横スクロール。少し進むとボスが現れる
+    if (deepTimer > 0) deepTimer -= dt;
   }
 
   // 潜航中に下から浮上してくる敵
@@ -865,15 +889,12 @@
 
   function spawnBoss() {
     const def = STAGE_BOSSES[currentStage - 1];
-    // 潜航中は縦穴の底から浮上して登場する
-    const fromBelow = diveMode === 'diving';
-    const baseX = fromBelow ? W / 2 : W - 140;
+    const baseX = W - 140;
     boss = {
       kind: def.kind,
-      fromBelow,
-      x: fromBelow ? baseX : W + 80,
+      x: W + 80,
       baseX,
-      y: fromBelow ? playH + 120 : playH / 2,
+      y: playH / 2,
       r: 46,
       hp: def.hp,
       maxHp: def.hp,
@@ -915,18 +936,13 @@
     if (!boss) return;
     boss.t += dt;
 
-    // 画面後方（潜航中は縦穴の底）から自然に泳いで登場する
+    // 画面後方から自然に泳いで登場する
     if (boss.entering) {
       boss.enterT += dt / 1.4;
       const t = Math.min(1, boss.enterT);
       const eased = 1 - Math.pow(1 - t, 3);
-      if (boss.fromBelow) {
-        boss.x = boss.baseX;
-        boss.y = (playH + 120) + (playH / 2 - (playH + 120)) * eased;
-      } else {
-        boss.x = (W + 80) + (boss.baseX - (W + 80)) * eased;
-        boss.y = playH / 2;
-      }
+      boss.x = (W + 80) + (boss.baseX - (W + 80)) * eased;
+      boss.y = playH / 2;
       if (t >= 1) {
         boss.entering = false;
         boss.x = boss.baseX;
@@ -937,9 +953,7 @@
       return;
     }
 
-    if (!boss.fromBelow) {
-      boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
-    }
+    boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
 
     // 前方への突進（ブロック崩しのボスが突っ込んでくる動きと同じ考え方）
     if (boss.lunging) {
@@ -956,16 +970,9 @@
         boss.lungeT = 0;
       }
     }
-    if (boss.fromBelow) {
-      // 縦穴では下半分を左右に泳ぎ、突進は上方向（自機がいる側）へ行う
-      const lungeUp = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * (playH * 0.3) : 0;
-      boss.y = playH * 0.66 + Math.sin(boss.t * 0.8) * (playH * 0.1) - lungeUp;
-      boss.x = boss.baseX + Math.sin(boss.t * 0.5) * (W * 0.24);
-    } else {
-      const lungeDepth = boss.baseX - 100;
-      const lungeOffset = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * lungeDepth : 0;
-      boss.x = boss.baseX - lungeOffset;
-    }
+    const lungeDepth = boss.baseX - 100;
+    const lungeOffset = boss.lunging ? Math.sin(boss.lungeT * Math.PI) * lungeDepth : 0;
+    boss.x = boss.baseX - lungeOffset;
 
     // 海底に見た目上埋まらないよう浮上させる（当たり判定はなし。縦穴には海底がないので対象外）
     if (diveMode !== 'diving') {
@@ -1282,9 +1289,9 @@
       updateVolcano(dt);
       updateWhirlpool(dt);
 
-      // 潜航ステージでは撃破数ではなく到達した深さでボスが現れる
+      // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
       if (currentStage === DIVE_STAGE) {
-        if (diveMode === 'diving' && diveDepth >= DIVE_BOSS_DEPTH) {
+        if (diveMode === 'deep' && deepTimer <= 0) {
           spawnBoss();
         }
       } else if (killCount >= BOSS_KILL_THRESHOLD) {
@@ -2367,7 +2374,7 @@
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = '13px sans-serif';
     ctx.fillText(`STAGE ${currentStage}/${STAGE_BOSSES.length}`, 12, 56);
-    if (diveMode === 'diving') {
+    if (diveMode === 'diving' || diveMode === 'deep') {
       ctx.fillStyle = '#9fe6ff';
       ctx.fillText(`DEPTH ${Math.floor(diveDepth)}m`, 90, 56);
     }
@@ -2458,9 +2465,11 @@
     drawButton(restartButton, 'RESTART', false);
   }
 
-  // 潜るほど暗くなる深海の闇
+  // 潜るほど暗くなる深海の闇（縦穴を抜けたあとも深海のままなので暗さを残す）
   function drawDepthDarkness() {
-    const k = Math.min(0.72, diveDepth / 2600);
+    // 横スクロールに戻ったあとはボスや敵が見えにくくならないよう少し明るくする
+    const cap = diveMode === 'deep' ? 0.5 : 0.72;
+    const k = Math.min(cap, diveDepth / 2600);
     ctx.fillStyle = `rgba(0,8,16,${k})`;
     ctx.fillRect(0, 0, W, playH);
   }
@@ -2530,6 +2539,7 @@
         drawDepthDarkness();
         drawCaveWalls();
       } else {
+        if (diveMode === 'deep') drawDepthDarkness();
         drawTerrain();
       }
       if (volcano) drawVolcano(volcano);
