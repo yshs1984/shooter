@@ -164,8 +164,7 @@
     boss = null;
     enemies = [];
     enemyBullets = [];
-    volcano = null;
-    volcanoSpawned = false;
+    resetVolcanoes();
     whirlpool = null;
     whirlpoolSpawned = false;
     player.caught = false;
@@ -421,6 +420,21 @@
     return s - Math.floor(s);
   }
 
+  // 周期ごとの山の情報（決定的。山がない周期はnull）
+  function mountainAt(periodIndex) {
+    const r1 = terrainHash(periodIndex);
+    if (r1 >= 0.6) return null;
+    const r2 = terrainHash(periodIndex + 100);
+    const r3 = terrainHash(periodIndex + 200);
+    return {
+      center: periodIndex * TERRAIN_PERIOD + TERRAIN_PERIOD * (0.3 + r2 * 0.4),
+      halfWidth: 140 + r3 * 110,
+      peakH: playH * 0.18 + r1 * (playH * 0.22), // 控えめ〜プレイエリアの4割程度
+      // 山のうち一部は火山。地形と一緒に流れてくるので固定配置にならない
+      isVolcano: terrainHash(periodIndex + 300) < VOLCANO_MOUNTAIN_CHANCE
+    };
+  }
+
   // ワールド座標x（画面スクロール分を含む）における海底の高さ（playHからの隆起量）
   function terrainHeightAt(worldX) {
     const rolling = 14 + Math.sin(worldX * 0.004) * 8 + Math.sin(worldX * 0.011 + 1.7) * 5;
@@ -431,20 +445,13 @@
       Math.abs(Math.sin(worldX * 0.23 + 1.2)) * 4 +
       Math.abs(Math.sin(worldX * 0.53 + 5.4)) * 2.2;
 
-    const periodIndex = Math.floor(worldX / TERRAIN_PERIOD);
-    const r1 = terrainHash(periodIndex);
-    const r2 = terrainHash(periodIndex + 100);
-    const r3 = terrainHash(periodIndex + 200);
-
+    const m = mountainAt(Math.floor(worldX / TERRAIN_PERIOD));
     let mountain = 0;
-    if (r1 < 0.6) {
-      const center = periodIndex * TERRAIN_PERIOD + TERRAIN_PERIOD * (0.3 + r2 * 0.4);
-      const halfWidth = 140 + r3 * 110;
-      const d = worldX - center;
-      if (Math.abs(d) < halfWidth) {
-        const t = d / halfWidth;
-        const peakH = playH * 0.18 + r1 * (playH * 0.22); // 控えめ〜プレイエリアの4割程度
-        mountain = Math.cos((t * Math.PI) / 2) ** 2 * peakH;
+    if (m) {
+      const d = worldX - m.center;
+      if (Math.abs(d) < m.halfWidth) {
+        const t = d / m.halfWidth;
+        mountain = Math.cos((t * Math.PI) / 2) ** 2 * m.peakH;
       }
     }
     return (rolling + jag + mountain) * holeMask(worldX);
@@ -880,31 +887,55 @@
   }
 
   // ---------- 火山 ----------
-  let volcano = null;
-  let volcanoSpawned = false;
+  // 海底の山の一部が火山になっており、地形と一緒に流れてくる（画面端に固定はされない）
   const VOLCANO_TRIGGER_KILLS = 14;
+  const VOLCANO_MOUNTAIN_CHANCE = 0.9;   // 山のうち火山になる割合（次々に流れてくるよう高めにする）
+  let volcanoActive = false;             // 撃破数の条件を満たして噴火が始まったか
+  let volcanoTimers = new Map();         // periodIndex -> 次の噴火までの秒数
 
-  function spawnVolcano() {
-    volcano = {
-      x: W - 60,
-      y: playH - 16,
-      r: 34,
-      fireCooldown: 0.5
-    };
+  function resetVolcanoes() {
+    volcanoActive = false;
+    volcanoTimers.clear();
   }
 
-  function updateVolcano(dt) {
-    if (!volcano) return;
-    volcano.fireCooldown -= dt;
-    if (volcano.fireCooldown <= 0) {
-      volcano.fireCooldown = 0.3 + Math.random() * 0.7;
-      const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.95;
-      const speed = 190 + Math.random() * 230;
-      spawnEnemyBullet(
-        volcano.x, volcano.y - volcano.r * 1.5,
-        Math.cos(angle) * speed, Math.sin(angle) * speed,
-        { r: 8, lava: true }
-      );
+  // 画面に写っている火山を列挙する
+  function visibleVolcanoes() {
+    const list = [];
+    const first = Math.floor(terrainOffset / TERRAIN_PERIOD) - 1;
+    const last = Math.floor((terrainOffset + W) / TERRAIN_PERIOD) + 1;
+    for (let i = first; i <= last; i++) {
+      const m = mountainAt(i);
+      if (!m || !m.isVolcano) continue;
+      const screenX = m.center - terrainOffset;
+      if (screenX < -60 || screenX > W + 60) continue;
+      list.push({ periodIndex: i, x: screenX, y: terrainSurfaceY(screenX) });
+    }
+    return list;
+  }
+
+  function updateVolcanoes(dt) {
+    if (!volcanoActive) return;
+    const onScreen = new Set();
+    for (const v of visibleVolcanoes()) {
+      onScreen.add(v.periodIndex);
+      let t = volcanoTimers.get(v.periodIndex);
+      if (t === undefined) t = 0.3 + Math.random() * 0.7;
+      t -= dt;
+      if (t <= 0) {
+        t = 0.6 + Math.random() * 1.0;
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.95;
+        const speed = 190 + Math.random() * 230;
+        spawnEnemyBullet(
+          v.x, v.y - 10,
+          Math.cos(angle) * speed, Math.sin(angle) * speed,
+          { r: 8, lava: true }
+        );
+      }
+      volcanoTimers.set(v.periodIndex, t);
+    }
+    // 画面外に出た火山のタイマーは破棄する
+    for (const key of volcanoTimers.keys()) {
+      if (!onScreen.has(key)) volcanoTimers.delete(key);
     }
   }
 
@@ -1004,7 +1035,6 @@
         diveDepth = 0;
         enemies = [];
         enemyBullets = [];
-        volcano = null;
         spawnTimer = 1.2;
         // 切り替えた瞬間に岩壁へめり込んで被弾しないよう、縦穴の中央へ移す
         player.x = W / 2;
@@ -1108,7 +1138,6 @@
     enemies = [];
     enemyBullets = [];
     inkClouds = [];
-    volcano = null;
     whirlpool = null;
     player.caught = false;
   }
@@ -1348,7 +1377,6 @@
     items = [];
     escorts = [];
     inkClouds = [];
-    volcano = null;
     whirlpool = null;
     boss = null;
     spawnTimer = 1.2;
@@ -1373,7 +1401,7 @@
     } else {
       // ステージの最初からやり直す
       killCount = 0;
-      volcanoSpawned = false;
+      resetVolcanoes();
       whirlpoolSpawned = false;
       resetDive();
       stageBannerTimer = 2.2;
@@ -1397,8 +1425,7 @@
     escorts = [];
     inkClouds = [];
     boss = null;
-    volcano = null;
-    volcanoSpawned = false;
+    resetVolcanoes();
     whirlpool = null;
     whirlpoolSpawned = false;
     resetDive();
@@ -1523,11 +1550,10 @@
         }
       } else if (currentStage === DIVE_STAGE) {
         updateDive(dt);
-      } else if (!volcanoSpawned && killCount >= VOLCANO_TRIGGER_KILLS) {
-        volcanoSpawned = true;
-        spawnVolcano();
+      } else if (!volcanoActive && killCount >= VOLCANO_TRIGGER_KILLS) {
+        volcanoActive = true;
       }
-      updateVolcano(dt);
+      updateVolcanoes(dt);
       updateWhirlpool(dt);
 
       // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
@@ -1609,7 +1635,7 @@
         if (currentStage < STAGE_BOSSES.length) {
           currentStage += 1;
           killCount = 0;
-          volcanoSpawned = false;
+          resetVolcanoes();
           whirlpoolSpawned = false;
           resetDive();
           spawnTimer = Math.max(spawnTimer, 1.2);
@@ -2735,37 +2761,43 @@
     ctx.restore();
   }
 
-  function drawVolcano(v) {
-    ctx.save();
-    ctx.translate(v.x, v.y);
-    // 山体
-    ctx.fillStyle = '#3a2a22';
-    ctx.beginPath();
-    ctx.moveTo(-v.r * 1.6, 0);
-    ctx.lineTo(-v.r * 0.5, -v.r * 1.6);
-    ctx.lineTo(v.r * 0.5, -v.r * 1.6);
-    ctx.lineTo(v.r * 1.6, 0);
-    ctx.closePath();
-    ctx.fill();
-    // 溶岩の筋
-    ctx.strokeStyle = 'rgba(255,120,30,0.55)';
-    ctx.lineWidth = Math.max(2, v.r * 0.08);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-v.r * 0.15, -v.r * 1.4);
-    ctx.lineTo(-v.r * 0.5, 0);
-    ctx.moveTo(v.r * 0.2, -v.r * 1.3);
-    ctx.lineTo(v.r * 0.55, 0);
-    ctx.stroke();
-    // 火口の光（明滅）
-    const glow = 0.6 + 0.4 * Math.sin(Date.now() / 150);
-    ctx.shadowColor = '#ff8a1a';
-    ctx.shadowBlur = 16 + glow * 14;
-    ctx.fillStyle = `rgba(255,140,40,${glow})`;
-    ctx.beginPath();
-    ctx.ellipse(0, -v.r * 1.55, v.r * 0.45, v.r * 0.22, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+  // 火山は地形の山そのものなので、山頂に火口と溶岩の筋だけを重ねて描く
+  function drawVolcanoes() {
+    for (const v of visibleVolcanoes()) {
+      const glow = 0.6 + 0.4 * Math.sin(Date.now() / 150 + v.periodIndex);
+      ctx.save();
+      ctx.translate(v.x, v.y);
+
+      // 山肌を流れる溶岩の筋（地形の斜面に沿わせる）
+      ctx.strokeStyle = 'rgba(255,120,30,0.5)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      for (const dir of [-1, 1]) {
+        ctx.beginPath();
+        for (let s = 0; s <= 8; s++) {
+          const dx = dir * s * 5;
+          // 表面より少し内側を通して、地形からはみ出さないようにする
+          const dy = terrainSurfaceY(v.x + dx) - v.y + 3;
+          if (s === 0) ctx.moveTo(dx, dy);
+          else ctx.lineTo(dx, dy);
+        }
+        ctx.stroke();
+      }
+
+      // 火口の光（明滅）
+      ctx.shadowColor = '#ff8a1a';
+      ctx.shadowBlur = 16 + glow * 14;
+      ctx.fillStyle = `rgba(255,140,40,${glow})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 17, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = `rgba(255,220,150,${0.5 + glow * 0.4})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 8, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   const ITEM_COLORS = {
@@ -3050,7 +3082,7 @@
         if (diveMode === 'deep') drawDepthDarkness();
         drawTerrain();
       }
-      if (volcano) drawVolcano(volcano);
+      if (volcanoActive) drawVolcanoes();
       if (whirlpool) drawWhirlpool(whirlpool);
       drawEnemies();
       drawItems();
