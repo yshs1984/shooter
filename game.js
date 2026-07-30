@@ -535,8 +535,8 @@
   }
 
   function playerMinX() { return player.size + 4; }
-  // 潜航中は縦穴の中を左右いっぱいに動けるようにする
-  function playerMaxX() { return diveMode === 'diving' ? W - player.size - 4 : W * 0.6; }
+  // 前進の上限は設けず画面右端まで行ける。前に出すぎて敵に接触するのはプレイヤーの判断に委ねる
+  function playerMaxX() { return W - player.size - 4; }
 
   // ---------- 潜水艦の気泡（艦尾から漏れる小さな泡） ----------
   let playerBubbles = [];
