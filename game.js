@@ -635,38 +635,102 @@
   let spawnTimer = 0;
   let spawnInterval = 1.4;
 
-  function spawnEnemy() {
-    const r = Math.random();
-    const y = 40 + Math.random() * (playH - 80);
-    if (r < 0.4) {
-      // ピラニアは単体ではなく群れ（3匹）で出現する
-      const schoolSize = 3;
-      for (let i = 0; i < schoolSize; i++) {
-        const sy = y + (i - (schoolSize - 1) / 2) * 26;
-        const sx = W + 30 + i * 24;
-        enemies.push({
-          type: 'straight',
-          x: sx, baseX: sx,
-          y: sy, baseY: sy,
-          vx: -170, vy: 0,
-          t: Math.random() * Math.PI * 2,
-          xWobble: 10 + Math.random() * 8,
-          yWobble: 9 + Math.random() * 7,
-          r: 14, hp: 1, score: 10
-        });
-      }
-    } else if (r < 0.75) {
-      enemies.push({
-        type: 'sine', x: W + 30, y, baseY: y, vx: -140,
-        amp: 40 + Math.random() * 40, freq: 1.5 + Math.random(), t: 0,
-        r: 14, hp: 1, score: 15
-      });
-    } else {
-      enemies.push({
-        type: 'shooter', x: W + 30, y, vx: -90, vy: 0,
-        r: 16, hp: 2, score: 25, fireCooldown: 1.2 + Math.random()
-      });
+  // ステージごとの出現テーブル（重み）。進むほど新しい敵が混ざるようにする
+  const STAGE_ENEMY_WEIGHTS = [
+    { school: 40, sine: 35, shooter: 25 },
+    { school: 28, sine: 24, shooter: 20, marlin: 16, moray: 12 },
+    { school: 18, sine: 16, shooter: 16, marlin: 16, moray: 12, puffer: 12, octopus: 10 }
+  ];
+
+  function pickEnemyKind() {
+    const idx = Math.min(currentStage, STAGE_ENEMY_WEIGHTS.length) - 1;
+    const table = STAGE_ENEMY_WEIGHTS[idx];
+    let total = 0;
+    for (const k in table) total += table[k];
+    let r = Math.random() * total;
+    for (const k in table) {
+      r -= table[k];
+      if (r <= 0) return k;
     }
+    return 'school';
+  }
+
+  function spawnEnemy() {
+    const y = 40 + Math.random() * (playH - 80);
+    switch (pickEnemyKind()) {
+      case 'sine':
+        enemies.push({
+          type: 'sine', x: W + 30, y, baseY: y, vx: -140,
+          amp: 40 + Math.random() * 40, freq: 1.5 + Math.random(), t: 0,
+          r: 14, hp: 1, score: 15
+        });
+        break;
+      case 'shooter':
+        enemies.push({
+          type: 'shooter', x: W + 30, y, vx: -90, vy: 0,
+          r: 16, hp: 2, score: 25, fireCooldown: 1.2 + Math.random()
+        });
+        break;
+      case 'marlin':
+        spawnMarlin();
+        break;
+      case 'moray':
+        spawnMoray();
+        break;
+      case 'puffer':
+        enemies.push({
+          type: 'puffer', x: W + 30, y, baseY: y, vx: -68, t: 0,
+          r: 18, hp: 3, maxHp: 3, score: 35
+        });
+        break;
+      case 'octopus':
+        enemies.push({
+          type: 'octopus', x: W + 30, y, baseY: y, vx: -80, t: 0,
+          r: 17, hp: 2, score: 30, inkCooldown: 1.0 + Math.random()
+        });
+        break;
+      default: {
+        // ピラニアは単体ではなく群れ（3匹）で出現する
+        const schoolSize = 3;
+        for (let i = 0; i < schoolSize; i++) {
+          const sy = y + (i - (schoolSize - 1) / 2) * 26;
+          const sx = W + 30 + i * 24;
+          enemies.push({
+            type: 'straight',
+            x: sx, baseX: sx,
+            y: sy, baseY: sy,
+            vx: -170, vy: 0,
+            t: Math.random() * Math.PI * 2,
+            xWobble: 10 + Math.random() * 8,
+            yWobble: 9 + Math.random() * 7,
+            r: 14, hp: 1, score: 10
+          });
+        }
+      }
+    }
+  }
+
+  // カジキ: 画面右端で狙いを定めてから自機めがけて高速で突進する
+  function spawnMarlin() {
+    enemies.push({
+      type: 'marlin',
+      x: W + 26,
+      y: Math.max(40, Math.min(playH - 40, player.y + (Math.random() - 0.5) * 90)),
+      vx: 0, r: 15, hp: 2, score: 30,
+      phase: 'aim', aimT: 0.75, t: 0
+    });
+  }
+
+  // ウツボ: 海底に張り付いて待ち伏せ、自機が近づくと飛び出して噛みつく
+  function spawnMoray() {
+    const x = W + 26;
+    enemies.push({
+      type: 'moray',
+      x, y: terrainSurfaceY(x) - 10,
+      r: 15, hp: 3, score: 30,
+      phase: 'hide', strikeT: 0, t: 0,
+      dirX: 0, dirY: 0
+    });
   }
 
   function updateEnemy(e, dt) {
@@ -698,7 +762,109 @@
         const speed = 260;
         spawnEnemyBullet(e.x, e.y, (dx / len) * speed, (dy / len) * speed, { r: 6, kind: 'spike' });
       }
+    } else if (e.type === 'marlin') {
+      e.t += dt;
+      if (e.phase === 'aim') {
+        // 突進前に画面端で少し引いて溜める（予兆）
+        e.aimT -= dt;
+        e.x = W + 26 - Math.sin(Math.min(1, (0.75 - e.aimT) / 0.75) * Math.PI) * 14;
+        if (e.aimT <= 0) {
+          e.phase = 'dash';
+          const dx = player.x - e.x;
+          const dy = player.y - e.y;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          const speed = 520;
+          e.vx = (dx / len) * speed;
+          e.vy = (dy / len) * speed;
+        }
+      } else {
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+      }
+    } else if (e.type === 'moray') {
+      e.t += dt;
+      // 海底に張り付いたままスクロールしていく
+      e.x -= TERRAIN_SCROLL_SPEED * dt;
+      const restY = terrainSurfaceY(e.x) - 10;
+      if (e.phase === 'hide') {
+        e.y = restY;
+        const near = Math.abs(player.x - e.x) < 120 && player.y > e.y - 190;
+        if (near && e.x < W - 20) {
+          e.phase = 'strike';
+          e.strikeT = 0;
+          const dx = player.x - e.x;
+          const dy = player.y - e.y;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          e.dirX = dx / len;
+          e.dirY = dy / len;
+        }
+      } else {
+        // 飛び出して噛みつき、また岩陰へ戻る
+        e.strikeT += dt / 0.85;
+        const reach = Math.sin(Math.min(1, e.strikeT) * Math.PI) * 120;
+        e.y = restY + e.dirY * reach;
+        e.x += e.dirX * reach * dt * 1.4;
+        if (e.strikeT >= 1) {
+          e.phase = 'hide';
+          e.y = restY;
+        }
+      }
+    } else if (e.type === 'puffer') {
+      e.t += dt;
+      e.x += e.vx * dt;
+      e.y = e.baseY + Math.sin(e.t * 1.5) * 12;
+    } else if (e.type === 'octopus') {
+      e.t += dt;
+      e.x += e.vx * dt;
+      e.y = e.baseY + Math.sin(e.t * 1.2) * 20;
+      e.inkCooldown -= dt;
+      if (e.inkCooldown <= 0 && e.x < W - 30) {
+        e.inkCooldown = 2.2 + Math.random() * 1.4;
+        spawnInk(e.x - e.r, e.y);
+      }
+    } else if (e.type === 'angler') {
+      // 潜航パート専用。普段は擬態していて、近づくと本体を現して襲ってくる
+      e.t += dt;
+      if (e.phase === 'lurk') {
+        e.y += e.vy * dt;
+        e.x = e.baseX + Math.sin(e.t * 1.1) * 10;
+        if (dist(e.x, e.y, player.x, player.y) < 130) {
+          e.phase = 'chase';
+          const dx = player.x - e.x;
+          const dy = player.y - e.y;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          const speed = 300;
+          e.vx = (dx / len) * speed;
+          e.vy = (dy / len) * speed;
+        }
+      } else {
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+      }
     }
+  }
+
+  // ---------- タコの墨（視界を奪うだけでダメージはない） ----------
+  let inkClouds = [];
+
+  function spawnInk(x, y) {
+    inkClouds.push({
+      // タコ本体(-80)より速く左へ流し、墨に隠れて本体が見えなくならないようにする
+      x, y, vx: -128,
+      r: 24, maxR: 74 + Math.random() * 24,
+      life: 4.0, maxLife: 4.0,
+      seed: Math.random() * Math.PI * 2
+    });
+  }
+
+  function updateInk(dt) {
+    for (const c of inkClouds) {
+      c.x += c.vx * dt;
+      c.y += Math.sin(c.seed + c.life * 1.2) * 6 * dt;
+      c.r = Math.min(c.maxR, c.r + 26 * dt);
+      c.life -= dt;
+    }
+    inkClouds = inkClouds.filter(c => c.life > 0 && c.x > -c.maxR * 1.4);
   }
 
   // ---------- 火山 ----------
@@ -867,6 +1033,19 @@
   function spawnDiveEnemy() {
     const margin = 46;
     const x = margin + Math.random() * (W - margin * 2);
+    // 3回に1回はチョウチンアンコウ（擬態して待ち構える）
+    if (Math.random() < 0.34) {
+      enemies.push({
+        type: 'angler',
+        x, baseX: x,
+        y: playH + 30,
+        vx: 0, vy: -(52 + Math.random() * 26),
+        t: Math.random() * Math.PI * 2,
+        r: 16, hp: 2, score: 40,
+        phase: 'lurk'
+      });
+      return;
+    }
     enemies.push({
       type: 'riser',
       x, baseX: x,
@@ -914,6 +1093,7 @@
     };
     enemies = [];
     enemyBullets = [];
+    inkClouds = [];
     volcano = null;
     whirlpool = null;
     player.caught = false;
@@ -1158,6 +1338,7 @@
     enemyBullets = [];
     items = [];
     escorts = [];
+    inkClouds = [];
     boss = null;
     volcano = null;
     volcanoSpawned = false;
@@ -1271,7 +1452,9 @@
       }
       for (const e of enemies) updateEnemy(e, dt);
       enemies = enemies.filter(e =>
-        e.x > -40 && e.y > -60 && e.y < playH + 80 && !collidesWorld(e.x, e.y, e.r)
+        e.x > -40 && e.y > -60 && e.y < playH + 80 &&
+        // ウツボは海底に張り付いているので地形判定では消さない
+        (e.type === 'moray' || !collidesWorld(e.x, e.y, e.r))
       );
 
       // ステージごとの障害（ステージ2は渦、ステージ3は大穴＝潜航、その他は火山）
@@ -1301,6 +1484,9 @@
       updateBoss(dt);
     }
 
+    // 墨はボス戦中も流れ続ける
+    updateInk(dt);
+
     // 自機弾 vs 敵
     for (const e of enemies) {
       for (const b of playerBullets) {
@@ -1324,6 +1510,15 @@
         e.dead = true;
         score += e.score;
         killCount += 1;
+        // フグは倒すと全方位にトゲを撒き散らす
+        if (e.type === 'puffer') {
+          const n = 10;
+          const speed = 190;
+          for (let i = 0; i < n; i++) {
+            const a = (Math.PI * 2 * i) / n + Math.random() * 0.2;
+            spawnEnemyBullet(e.x, e.y, Math.cos(a) * speed, Math.sin(a) * speed, { r: 5, kind: 'spike' });
+          }
+        }
         if (Math.random() < ITEM_DROP_CHANCE) spawnItem(e.x, e.y);
       }
     }
@@ -1691,6 +1886,245 @@
     ctx.restore();
   }
 
+  // カジキ: 長い吻を持つ細身の魚。突進前は溜めの光を出す
+  function drawMarlinEnemy(e) {
+    const r = e.r;
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    if (e.phase === 'dash') ctx.rotate(Math.atan2(e.vy, e.vx) + Math.PI);
+
+    if (e.phase === 'aim') {
+      // 突進の予兆（明滅する残光）
+      const blink = 0.5 + 0.5 * Math.sin(e.t * 22);
+      ctx.shadowColor = '#ffd166';
+      ctx.shadowBlur = 8 + blink * 14;
+    }
+    ctx.fillStyle = '#35618f';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 1.25, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 長い吻（左向き＝進行方向）
+    ctx.beginPath();
+    ctx.moveTo(-r * 1.15, -r * 0.09);
+    ctx.lineTo(-r * 2.1, 0);
+    ctx.lineTo(-r * 1.15, r * 0.09);
+    ctx.closePath();
+    ctx.fill();
+    // 背びれ・尾びれ
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.1, -r * 0.35);
+    ctx.lineTo(r * 0.35, -r * 1.15);
+    ctx.lineTo(r * 0.5, -r * 0.28);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(r * 1.1, 0);
+    ctx.lineTo(r * 1.75, -r * 0.6);
+    ctx.lineTo(r * 1.75, r * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    drawEvilEye(-r * 0.72, -r * 0.08, r * 0.15, '#ff2020', r * 0.8);
+    ctx.restore();
+  }
+
+  // ウツボ: 岩陰から胴体を伸ばして噛みつく
+  function drawMorayEnemy(e) {
+    const r = e.r;
+    const restY = terrainSurfaceY(e.x) - 10;
+    ctx.save();
+    ctx.translate(e.x, restY);
+
+    // 岩陰からの伸び具合（ローカル座標。原点は海底の巣穴）
+    const tipY = e.y - restY;
+    const tipX = (e.phase === 'strike' ? e.dirX * 0.35 : 0) * tipY;
+
+    // 岩から伸びる胴体
+    ctx.strokeStyle = '#4e7a4a';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = r * 0.85;
+    ctx.beginPath();
+    ctx.moveTo(0, 6);
+    ctx.quadraticCurveTo(tipX * 0.4, tipY * 0.55, tipX, tipY);
+    ctx.stroke();
+
+    // 頭
+    ctx.save();
+    ctx.translate(tipX, tipY);
+    ctx.rotate(Math.atan2(tipY, tipX) + Math.PI / 2);
+    ctx.fillStyle = '#5c8f56';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.52, r * 0.72, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 開いた口とギザギザの歯
+    ctx.fillStyle = '#2a1206';
+    ctx.beginPath();
+    ctx.ellipse(0, -r * 0.34, r * 0.34, r * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 4; i++) {
+      const tx = -r * 0.26 + i * r * 0.17;
+      ctx.beginPath();
+      ctx.moveTo(tx, -r * 0.55);
+      ctx.lineTo(tx + r * 0.07, -r * 0.34);
+      ctx.lineTo(tx + r * 0.14, -r * 0.55);
+      ctx.closePath();
+      ctx.fill();
+    }
+    drawEvilEye(-r * 0.2, r * 0.06, r * 0.13, '#ffcf3a', r * 0.7);
+    drawEvilEye(r * 0.2, r * 0.06, r * 0.13, '#ffcf3a', r * 0.7);
+    ctx.restore();
+    ctx.restore();
+  }
+
+  // フグ: ダメージを受けるほど膨らむ。倒すとトゲを撒く
+  function drawPufferEnemy(e) {
+    const dmg = 1 - (e.hp - 1) / Math.max(1, e.maxHp - 1); // 0(無傷)→1(瀕死)
+    const r = e.r * (0.85 + dmg * 0.45);
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    // 全身のトゲ
+    ctx.fillStyle = '#c99a3e';
+    const spikes = 12;
+    for (let i = 0; i < spikes; i++) {
+      const a = (Math.PI * 2 * i) / spikes + e.t * 0.4;
+      const half = (Math.PI / spikes) * 0.4;
+      const len = r * (1.18 + dmg * 0.3);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a - half) * r * 0.92, Math.sin(a - half) * r * 0.92);
+      ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+      ctx.lineTo(Math.cos(a + half) * r * 0.92, Math.sin(a + half) * r * 0.92);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // 本体
+    ctx.fillStyle = '#e8c46b';
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    // 尾びれ
+    ctx.beginPath();
+    ctx.moveTo(r * 0.85, 0);
+    ctx.lineTo(r * 1.5, -r * 0.42);
+    ctx.lineTo(r * 1.5, r * 0.42);
+    ctx.closePath();
+    ctx.fill();
+    // すぼめた口
+    ctx.fillStyle = '#8a5a1c';
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.78, r * 0.12, r * 0.16, r * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    drawEvilEye(-r * 0.42, -r * 0.3, r * 0.15, '#ff2020', r * 0.8);
+    ctx.restore();
+  }
+
+  // タコ: 丸い頭と8本足。墨を吐く
+  function drawOctopusEnemy(e) {
+    const r = e.r;
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    ctx.fillStyle = '#8e4bb0';
+    // 足（後方へなびく）
+    ctx.strokeStyle = '#8e4bb0';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = r * 0.16;
+    for (let i = -2; i <= 2; i++) {
+      const baseY = i * r * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(r * 0.4, baseY * 0.6);
+      ctx.quadraticCurveTo(
+        r * 1.0, baseY + Math.sin(e.t * 3 + i) * r * 0.22,
+        r * 1.55, baseY * 1.5 + Math.sin(e.t * 3 + i + 1) * r * 0.3
+      );
+      ctx.stroke();
+    }
+    // 頭
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.1, 0, r * 0.92, r * 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 墨を吐く直前は口元が光る
+    if (e.inkCooldown < 0.35) {
+      ctx.fillStyle = 'rgba(40,10,60,0.9)';
+      ctx.beginPath();
+      ctx.arc(-r * 0.95, r * 0.16, r * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    drawEvilEye(-r * 0.42, -r * 0.18, r * 0.16, '#ff2020', r * 0.8);
+    drawEvilEye(r * 0.14, -r * 0.24, r * 0.16, '#ff2020', r * 0.8);
+    ctx.restore();
+  }
+
+  // チョウチンアンコウ: 潜んでいる間は光る誘引突起だけが見える
+  function drawAnglerEnemy(e) {
+    const r = e.r;
+    const lurking = e.phase === 'lurk';
+    const glow = 0.55 + 0.45 * Math.sin(e.t * 3);
+    ctx.save();
+    ctx.translate(e.x, e.y);
+
+    if (!lurking) {
+      // 本体（大きな口とギザギザの歯）
+      ctx.fillStyle = '#2b2036';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 1.05, r * 0.9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(r * 0.85, 0);
+      ctx.lineTo(r * 1.6, -r * 0.5);
+      ctx.lineTo(r * 1.6, r * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      for (let i = 0; i < 5; i++) {
+        const tx = -r * 0.75 + i * r * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(tx, r * 0.16);
+        ctx.lineTo(tx + r * 0.12, r * 0.52);
+        ctx.lineTo(tx + r * 0.24, r * 0.16);
+        ctx.closePath();
+        ctx.fill();
+      }
+      drawEvilEye(-r * 0.3, -r * 0.34, r * 0.15, '#ff2020', r * 0.9);
+    }
+
+    // 誘引突起（提灯）。潜んでいる間はこれだけが見える
+    ctx.strokeStyle = lurking ? 'rgba(150,230,255,0.35)' : 'rgba(150,230,255,0.6)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.35, -r * 0.5);
+    ctx.quadraticCurveTo(-r * 1.0, -r * 1.5, -r * 1.35, -r * 1.0);
+    ctx.stroke();
+    ctx.shadowColor = '#9fe6ff';
+    ctx.shadowBlur = 12 + glow * 16;
+    ctx.fillStyle = `rgba(200,245,255,${0.7 + glow * 0.3})`;
+    ctx.beginPath();
+    ctx.arc(-r * 1.35, -r * 1.0, r * 0.24, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // タコの墨（画面を覆って視界を奪う）
+  function drawInk() {
+    for (const c of inkClouds) {
+      const fade = Math.min(1, c.life / (c.maxLife * 0.45));
+      ctx.save();
+      ctx.globalAlpha = 0.72 * fade;
+      ctx.fillStyle = '#0a0512';
+      // 単一の円だと不自然なので複数の塊を重ねてもやっとさせる
+      for (let i = 0; i < 5; i++) {
+        const a = c.seed + (Math.PI * 2 * i) / 5;
+        const d = c.r * 0.34;
+        ctx.beginPath();
+        ctx.arc(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d, c.r * 0.68, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawJellyEnemy(e) {
     const r = e.r;
     ctx.save();
@@ -1783,6 +2217,11 @@
       // 浮上してくる敵はクラゲの見た目を流用する（上へ漂う動きと合う）
       if (e.type === 'sine' || e.type === 'riser') drawJellyEnemy(e);
       else if (e.type === 'shooter') drawSpikyEnemy(e);
+      else if (e.type === 'marlin') drawMarlinEnemy(e);
+      else if (e.type === 'moray') drawMorayEnemy(e);
+      else if (e.type === 'puffer') drawPufferEnemy(e);
+      else if (e.type === 'octopus') drawOctopusEnemy(e);
+      else if (e.type === 'angler') drawAnglerEnemy(e);
       else drawFishEnemy(e);
     }
   }
@@ -2552,6 +2991,8 @@
       drawEscorts();
       drawShieldEffect();
       drawPlayer();
+      // 墨は自機や敵の上に被せて視界を奪う（HUDより下）
+      drawInk();
       drawHud();
       drawControls();
       if (state === STATE_PLAYING && stageBannerTimer > 0) drawStageBanner();
