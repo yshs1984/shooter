@@ -24,6 +24,7 @@
   const STATE_PAUSED = 'paused';
   const STATE_GAMEOVER = 'gameover';
   const STATE_CLEAR = 'clear';
+  const STATE_CONTINUE = 'continue';
 
   let state = STATE_TITLE;
   let score = 0;
@@ -32,6 +33,11 @@
   let killCount = 0;
   const BOSS_KILL_THRESHOLD = 30;
   const MAX_LIVES = 5;
+
+  // ライフが尽きても規定回数までは再開できる（ボス戦で尽きたならボス戦から）
+  const CONTINUE_MAX = 2;
+  let continuesLeft = CONTINUE_MAX;
+  let checkpointAtBoss = false;
 
   // ---------- 面構成 ----------
   const STAGE_BOSSES = [
@@ -141,7 +147,9 @@
   }
 
   function maybeStartOrRestart() {
-    if (state === STATE_TITLE || state === STATE_GAMEOVER || state === STATE_CLEAR) {
+    if (state === STATE_CONTINUE) {
+      continueGame();
+    } else if (state === STATE_TITLE || state === STATE_GAMEOVER || state === STATE_CLEAR) {
       startGame();
     }
   }
@@ -1071,6 +1079,8 @@
   };
 
   function spawnBoss() {
+    // ここ以降に力尽きたらボス戦から再開する
+    checkpointAtBoss = true;
     const def = STAGE_BOSSES[currentStage - 1];
     const baseX = W - 140;
     boss = {
@@ -1326,7 +1336,48 @@
     lives -= 1;
     player.invuln = 1.5;
     if (lives <= 0) {
-      state = STATE_GAMEOVER;
+      state = continuesLeft > 0 ? STATE_CONTINUE : STATE_GAMEOVER;
+    }
+  }
+
+  // 進行中のものを一掃して、その場から仕切り直せる状態にする
+  function clearField() {
+    enemies = [];
+    playerBullets = [];
+    enemyBullets = [];
+    items = [];
+    escorts = [];
+    inkClouds = [];
+    volcano = null;
+    whirlpool = null;
+    boss = null;
+    spawnTimer = 1.2;
+    playerBubbles = [];
+    playerBubbleTimer = 0;
+  }
+
+  // コンティニュー。ボス戦で力尽きたならボス戦から、そうでなければそのステージの最初から
+  function continueGame() {
+    if (continuesLeft <= 0) return;
+    continuesLeft -= 1;
+    lives = 3;
+    state = STATE_PLAYING;
+    clearField();
+    resetPlayer();
+
+    if (checkpointAtBoss) {
+      // ボスを出し直す（ステージ3の潜航後なら深海の横スクロールのまま再戦）
+      stageBannerTimer = 2.0;
+      stageBannerText = 'BOSS BATTLE';
+      spawnBoss();
+    } else {
+      // ステージの最初からやり直す
+      killCount = 0;
+      volcanoSpawned = false;
+      whirlpoolSpawned = false;
+      resetDive();
+      stageBannerTimer = 2.2;
+      stageBannerText = `STAGE ${currentStage}`;
     }
   }
 
@@ -1335,6 +1386,8 @@
     state = STATE_PLAYING;
     score = 0;
     lives = 3;
+    continuesLeft = CONTINUE_MAX;
+    checkpointAtBoss = false;
     elapsed = 0;
     killCount = 0;
     enemies = [];
@@ -1551,6 +1604,8 @@
       if (boss.hp <= 0) {
         score += STAGE_BOSSES[currentStage - 1].score;
         boss = null;
+        // ボスを倒したので、次に力尽きたときはステージ最初からに戻す
+        checkpointAtBoss = false;
         if (currentStage < STAGE_BOSSES.length) {
           currentStage += 1;
           killCount = 0;
@@ -2814,7 +2869,15 @@
     ctx.font = '16px sans-serif';
     ctx.textBaseline = 'top';
     ctx.fillText(`SCORE ${score}`, 12, 12);
-    ctx.fillText('LIFE ' + '♥'.repeat(Math.max(0, lives)), 12, 34);
+    const lifeText = 'LIFE ' + '♥'.repeat(Math.max(0, lives));
+    ctx.fillText(lifeText, 12, 34);
+    // 残りコンティニュー回数（減っているときだけ出す）。幅は描画に使った16pxのまま測る
+    const lifeW = ctx.measureText(lifeText).width;
+    if (continuesLeft < CONTINUE_MAX) {
+      ctx.fillStyle = '#ffb0c0';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(`CONTINUE ${continuesLeft}`, 12 + lifeW + 22, 36);
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = '13px sans-serif';
     ctx.fillText(`STAGE ${currentStage}/${STAGE_BOSSES.length}`, 12, 56);
@@ -2978,7 +3041,8 @@
   function render() {
     drawOceanBackground();
 
-    if (state === STATE_PLAYING || state === STATE_PAUSED) {
+    // コンティニュー確認中も、どこで力尽きたか分かるよう盤面を残したまま上に重ねる
+    if (state === STATE_PLAYING || state === STATE_PAUSED || state === STATE_CONTINUE) {
       if (diveMode === 'diving') {
         drawDepthDarkness();
         drawCaveWalls();
@@ -3002,8 +3066,10 @@
       drawControls();
       if (state === STATE_PLAYING && stageBannerTimer > 0) drawStageBanner();
       if (state === STATE_PAUSED) drawPauseOverlay();
-      drawPauseButton();
-    } else if (state === STATE_TITLE) {
+      if (state !== STATE_CONTINUE) drawPauseButton();
+    }
+
+    if (state === STATE_TITLE) {
       drawCenterText([
         { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
         { text: 'タップでスタート', font: '18px sans-serif' }
@@ -3013,6 +3079,15 @@
       ctx.textAlign = 'center';
       ctx.fillText(GAME_VERSION, W / 2, H - 14);
       ctx.textAlign = 'left';
+    } else if (state === STATE_CONTINUE) {
+      drawCenterText([
+        { text: 'CONTINUE?', font: 'bold 26px sans-serif' },
+        { text: `のこり ${continuesLeft}回`, font: '18px sans-serif' },
+        {
+          text: checkpointAtBoss ? 'タップでボス戦から再開' : `タップでステージ${currentStage}の最初から再開`,
+          font: '15px sans-serif'
+        }
+      ]);
     } else if (state === STATE_GAMEOVER) {
       drawCenterText([
         { text: 'GAME OVER', font: 'bold 26px sans-serif' },
