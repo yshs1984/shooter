@@ -573,6 +573,9 @@
   let enemyBullets = [];
 
   const BULLET_SPEED = 620;
+  // ホーミング弾の追尾性能。旋回が速すぎるとまず外れないため控えめにしている
+  const HOMING_TURN_RATE = 2.2;  // 最大旋回速度(rad/s)
+  const HOMING_RANGE = 230;      // この距離より遠い敵は追わない(px)
   const BASE_FIRE_INTERVAL = 0.38;
   const RAPID_FIRE_INTERVAL = 0.15;
   const MOVE_SPEED_NORMAL = 260;
@@ -607,9 +610,10 @@
     }
   }
 
-  function findNearestTarget(x, y) {
+  // maxRange を渡すとその範囲内の敵だけを対象にする
+  function findNearestTarget(x, y, maxRange) {
     let best = null;
-    let bestDist = Infinity;
+    let bestDist = maxRange === undefined ? Infinity : maxRange;
     for (const e of enemies) {
       const d = dist(x, y, e.x, e.y);
       if (d < bestDist) { bestDist = d; best = e; }
@@ -1411,13 +1415,14 @@
 
     for (const b of playerBullets) {
       if (b.homing) {
-        const target = findNearestTarget(b.x, b.y);
+        // 索敵範囲内の敵にだけ、ゆるやかに曲がって追尾する（外すこともある）
+        const target = findNearestTarget(b.x, b.y, HOMING_RANGE);
         if (target) {
           const desiredAngle = Math.atan2(target.y - b.y, target.x - b.x);
           const curAngle = Math.atan2(b.vy, b.vx);
           let diff = desiredAngle - curAngle;
           diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-          const maxTurn = 6 * dt;
+          const maxTurn = HOMING_TURN_RATE * dt;
           const newAngle = curAngle + Math.max(-maxTurn, Math.min(maxTurn, diff));
           const speed = Math.hypot(b.vx, b.vy);
           b.vx = Math.cos(newAngle) * speed;
