@@ -165,9 +165,7 @@
     enemies = [];
     enemyBullets = [];
     resetVolcanoes();
-    whirlpool = null;
-    whirlpoolSpawned = false;
-    player.caught = false;
+    resetWhirlpools();
     resetDive();
     killCount = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
@@ -940,24 +938,32 @@
   }
 
   // ---------- 渦（ステージ2で火山の代わりに出現する） ----------
-  let whirlpool = null;
-  let whirlpoolSpawned = false;
+  let whirlpools = [];
+  let whirlpoolActive = false;        // 撃破数の条件を満たして渦が発生し始めたか
+  let whirlpoolSpawnTimer = 0;
   const WHIRLPOOL_STAGE = 2;
   const WHIRLPOOL_TRIGGER_KILLS = 14;
   const WHIRLPOOL_SPIN_SPEED = 3.6;   // 捕まっている間の回転角速度(rad/s)
   const WHIRLPOOL_SINK_SPEED = 76;    // 下へ引きずり込まれる速さ(px/s)
-  const WHIRLPOOL_TOP_R = 86;         // 漏斗の口の半径
-  const WHIRLPOOL_DEPTH = 210;        // 漏斗の深さ
+  const WHIRLPOOL_DEPTH = 210;        // 漏斗の深さ（基準値）
 
+  function resetWhirlpools() {
+    whirlpools = [];
+    whirlpoolActive = false;
+    whirlpoolSpawnTimer = 0;
+    player.caught = false;
+  }
+
+  // 大きさ・深さ・速さ・高さをばらつかせて次々に流す
   function spawnWhirlpool() {
-    whirlpool = {
+    whirlpools.push({
       x: W + 120,
-      y: playH * 0.18 + Math.random() * playH * 0.12,  // 漏斗の口（上端）
-      r: WHIRLPOOL_TOP_R,
-      depth: WHIRLPOOL_DEPTH,
-      vx: -46,
-      t: 0
-    };
+      y: playH * 0.14 + Math.random() * playH * 0.24,  // 漏斗の口（上端）
+      r: 68 + Math.random() * 30,
+      depth: WHIRLPOOL_DEPTH * (0.85 + Math.random() * 0.35),
+      vx: -(40 + Math.random() * 20),
+      t: Math.random() * Math.PI * 2
+    });
   }
 
   // 漏斗の底（海底に埋まらないよう手前で止める）
@@ -972,36 +978,46 @@
     return wp.r * (1 - u * 0.78);
   }
 
-  function updateWhirlpool(dt) {
-    if (!whirlpool) return;
-    whirlpool.t += dt;
-    whirlpool.x += whirlpool.vx * dt;
-    if (whirlpool.x < -whirlpool.r * 1.6) {
-      whirlpool = null;
-      player.caught = false;
+  function updateWhirlpools(dt) {
+    if (whirlpoolActive) {
+      whirlpoolSpawnTimer -= dt;
+      if (whirlpoolSpawnTimer <= 0) {
+        whirlpoolSpawnTimer = 4.5 + Math.random() * 2.5;
+        spawnWhirlpool();
+      }
     }
+    for (const wp of whirlpools) {
+      wp.t += dt;
+      wp.x += wp.vx * dt;
+    }
+    whirlpools = whirlpools.filter(wp => wp.x > -wp.r * 1.6);
+  }
+
+  // 自機を巻き込んでいる渦を返す（複数あっても最初に捕まえた1つだけが効く）
+  function whirlpoolCatching() {
+    for (const wp of whirlpools) {
+      const bottom = whirlpoolBottomY(wp);
+      // 漏斗の内側（上端より少し上から底まで）にいるときだけ捕まる
+      if (player.y < wp.y - 24 || player.y > bottom + 12) continue;
+      if (Math.abs(player.x - wp.x) > whirlpoolRadiusAt(wp, player.y) + 14) continue;
+      return wp;
+    }
+    return null;
   }
 
   // 渦に入っている間は操作を奪い、回転させながら下へ引きずり込む
   function applyWhirlpool(dt) {
-    if (!whirlpool) {
-      player.caught = false;
-      return false;
-    }
-    const wp = whirlpool;
-    const bottom = whirlpoolBottomY(wp);
-    const dx = player.x - wp.x;
-    // 漏斗の内側（上端より少し上から底まで）にいるときだけ捕まる
-    if (player.y < wp.y - 24 || player.y > bottom + 12 ||
-        Math.abs(dx) > whirlpoolRadiusAt(wp, player.y) + 14) {
+    const wp = whirlpoolCatching();
+    if (!wp) {
       player.caught = false;
       return false;
     }
 
     player.caught = true;
     // 縦軸のまわりを回りながら沈んでいく
+    const bottom = whirlpoolBottomY(wp);
     const newY = Math.min(bottom, Math.max(wp.y, player.y) + WHIRLPOOL_SINK_SPEED * dt);
-    const angle = Math.atan2(0, 1) + wp.t * WHIRLPOOL_SPIN_SPEED;
+    const angle = wp.t * WHIRLPOOL_SPIN_SPEED;
     player.y = newY;
     player.x = wp.x + Math.cos(angle) * whirlpoolRadiusAt(wp, newY);
     player.spin += WHIRLPOOL_SPIN_SPEED * dt;
@@ -1138,8 +1154,7 @@
     enemies = [];
     enemyBullets = [];
     inkClouds = [];
-    whirlpool = null;
-    player.caught = false;
+    resetWhirlpools();
   }
 
   function squidTentacleTip(b) {
@@ -1377,7 +1392,7 @@
     items = [];
     escorts = [];
     inkClouds = [];
-    whirlpool = null;
+    resetWhirlpools();
     boss = null;
     spawnTimer = 1.2;
     playerBubbles = [];
@@ -1402,7 +1417,7 @@
       // ステージの最初からやり直す
       killCount = 0;
       resetVolcanoes();
-      whirlpoolSpawned = false;
+      resetWhirlpools();
       resetDive();
       stageBannerTimer = 2.2;
       stageBannerText = `STAGE ${currentStage}`;
@@ -1426,8 +1441,7 @@
     inkClouds = [];
     boss = null;
     resetVolcanoes();
-    whirlpool = null;
-    whirlpoolSpawned = false;
+    resetWhirlpools();
     resetDive();
     spawnTimer = 0;
     terrainOffset = 0;
@@ -1544,9 +1558,9 @@
 
       // ステージごとの障害（ステージ2は渦、ステージ3は大穴＝潜航、その他は火山）
       if (currentStage === WHIRLPOOL_STAGE) {
-        if (!whirlpoolSpawned && killCount >= WHIRLPOOL_TRIGGER_KILLS) {
-          whirlpoolSpawned = true;
-          spawnWhirlpool();
+        if (!whirlpoolActive && killCount >= WHIRLPOOL_TRIGGER_KILLS) {
+          whirlpoolActive = true;
+          whirlpoolSpawnTimer = 0;
         }
       } else if (currentStage === DIVE_STAGE) {
         updateDive(dt);
@@ -1554,7 +1568,7 @@
         volcanoActive = true;
       }
       updateVolcanoes(dt);
-      updateWhirlpool(dt);
+      updateWhirlpools(dt);
 
       // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
       if (currentStage === DIVE_STAGE) {
@@ -1636,7 +1650,7 @@
           currentStage += 1;
           killCount = 0;
           resetVolcanoes();
-          whirlpoolSpawned = false;
+          resetWhirlpools();
           resetDive();
           spawnTimer = Math.max(spawnTimer, 1.2);
           stageBannerTimer = 2.2;
@@ -3083,7 +3097,7 @@
         drawTerrain();
       }
       if (volcanoActive) drawVolcanoes();
-      if (whirlpool) drawWhirlpool(whirlpool);
+      for (const wp of whirlpools) drawWhirlpool(wp);
       drawEnemies();
       drawItems();
       drawBoss();
