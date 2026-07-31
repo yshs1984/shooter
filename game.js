@@ -1400,7 +1400,8 @@
       chargeCooldown: 3.0,
       chargePhase: 'none',
       chargeT: 0,
-      chargeY: 0
+      chargeY: 0,
+      returnY: 0
     };
     enemies = [];
     enemyBullets = [];
@@ -1454,23 +1455,28 @@
       // 画面を左へ走り抜ける
       boss.x -= SHARK_CHARGE_SPEED * dt;
       if (boss.x < -boss.r * 1.8) {
+        // 画面外で反転し、突進した高さと反対側から泳いで戻ってくる
         boss.chargePhase = 'back';
         boss.chargeT = 0;
-        boss.x = W + boss.r * 1.8;
-        boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
+        boss.returnY = Math.max(60, Math.min(playH - 60, playH - boss.chargeY));
+        boss.y = boss.returnY;
       }
       return true;
     }
 
-    // back: 右外から定位置へ戻る
-    boss.chargeT += dt / 0.9;
+    // back: 左外から泳いで定位置へ戻る（右向き）
+    boss.chargeT += dt / 1.6;
     const t = Math.min(1, boss.chargeT);
     const eased = 1 - Math.pow(1 - t, 3);
-    const from = W + boss.r * 1.8;
+    const from = -boss.r * 1.8;
     boss.x = from + (boss.baseX - from) * eased;
+    boss.y = boss.returnY;
     if (t >= 1) {
       boss.chargePhase = 'none';
       boss.x = boss.baseX;
+      // 通常の上下運動へ戻る際にyが飛ばないよう、今の高さに合う位相からtを再開する
+      const s = Math.max(-1, Math.min(1, (boss.y - playH / 2) / (playH * 0.28)));
+      boss.t = Math.asin(s) / 0.8;
       boss.chargeCooldown = 4.5 + Math.random() * 2.5;
     }
     return true;
@@ -3120,7 +3126,11 @@
     drawSharkChargeFx(R);
     if (boss.kind === 'crab') drawCrabBossBody(R);
     else if (boss.kind === 'squid') drawSquidBossBody(R);
-    else drawSharkBossBody(R);
+    else {
+      // 戻りは右向きに泳ぐので、絵も反転させる
+      if (boss.chargePhase === 'back') ctx.scale(-1, 1);
+      drawSharkBossBody(R);
+    }
 
     ctx.restore();
     drawHitFlash(boss);
