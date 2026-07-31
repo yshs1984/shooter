@@ -129,6 +129,9 @@
     item:      () => { playTone({ type: 'triangle', from: 660, to: 660, dur: 0.07, vol: 0.16 });
                        setTimeout(() => playTone({ type: 'triangle', from: 990, to: 990, dur: 0.11, vol: 0.16 }), 70); },
     bossAppear:() => playTone({ type: 'sawtooth', from: 70,   to: 180,  dur: 0.9,  vol: 0.20 }),
+    // サメの突進: 溜めは上昇音、突進は水を切るノイズ
+    sharkCharge:() => playTone({ type: 'sawtooth', from: 120, to: 420, dur: 0.8, vol: 0.16 }),
+    sharkBite: () => playNoise({ dur: 0.45, freq: 400, freqTo: 2600, vol: 0.30, filterType: 'bandpass' }),
     bossDown:  () => { playNoise({ dur: 0.9, freq: 900, freqTo: 60, vol: 0.45 });
                        playTone({ type: 'sawtooth', from: 200, to: 40, dur: 0.9, vol: 0.18 }); },
     stage:     () => { playTone({ type: 'triangle', from: 520, to: 520, dur: 0.12, vol: 0.18 });
@@ -1393,7 +1396,11 @@
       tentacleT: 0,
       tentacleIndex: 0,
       tentacleTargetX: 0,
-      tentacleTargetY: 0
+      tentacleTargetY: 0,
+      chargeCooldown: 3.0,
+      chargePhase: 'none',
+      chargeT: 0,
+      chargeY: 0
     };
     enemies = [];
     enemyBullets = [];
@@ -1412,6 +1419,61 @@
       y: attachY + (b.tentacleTargetY - attachY) * reach,
       reach
     };
+  }
+
+  // サメの噛みつき突進。突進中はtrueを返し、通常の遊泳・射撃を止める
+  const SHARK_CHARGE_AIM = 0.85;    // 溜めの時間
+  const SHARK_CHARGE_SPEED = 900;   // 突進速度(px/s)
+
+  function updateSharkCharge(dt) {
+    if (boss.chargePhase === 'none') {
+      boss.chargeCooldown -= dt;
+      if (boss.chargeCooldown <= 0) {
+        boss.chargePhase = 'aim';
+        boss.chargeT = 0;
+        boss.chargeY = player.y;   // この瞬間の高さに狙いを固定する
+        SFX.sharkCharge();
+      }
+      return false;
+    }
+
+    if (boss.chargePhase === 'aim') {
+      // 後ろに引いて溜めつつ、自機の高さへ鼻先を合わせる
+      boss.chargeT += dt / SHARK_CHARGE_AIM;
+      const t = Math.min(1, boss.chargeT);
+      boss.x = boss.baseX + Math.sin(t * Math.PI) * 26;
+      boss.y += (boss.chargeY - boss.y) * Math.min(1, dt * 5);
+      if (t >= 1) {
+        boss.chargePhase = 'run';
+        SFX.sharkBite();
+      }
+      return true;
+    }
+
+    if (boss.chargePhase === 'run') {
+      // 画面を左へ走り抜ける
+      boss.x -= SHARK_CHARGE_SPEED * dt;
+      if (boss.x < -boss.r * 1.8) {
+        boss.chargePhase = 'back';
+        boss.chargeT = 0;
+        boss.x = W + boss.r * 1.8;
+        boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
+      }
+      return true;
+    }
+
+    // back: 右外から定位置へ戻る
+    boss.chargeT += dt / 0.9;
+    const t = Math.min(1, boss.chargeT);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const from = W + boss.r * 1.8;
+    boss.x = from + (boss.baseX - from) * eased;
+    if (t >= 1) {
+      boss.chargePhase = 'none';
+      boss.x = boss.baseX;
+      boss.chargeCooldown = 4.5 + Math.random() * 2.5;
+    }
+    return true;
   }
 
   function updateBoss(dt) {
@@ -1434,6 +1496,9 @@
       }
       return;
     }
+
+    // サメの固有攻撃: 狙いを定めてから画面を横断する噛みつき突進
+    if (boss.kind === 'shark' && updateSharkCharge(dt)) return;
 
     boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
 
@@ -3006,12 +3071,53 @@
     }
   }
 
+  // 突進中のサメに、溜めの予兆と走行時の水しぶきを重ねる
+  function drawSharkChargeFx(R) {
+    if (boss.kind !== 'shark') return;
+
+    if (boss.chargePhase === 'aim') {
+      // 狙われていることが分かるよう赤く明滅させ、狙いの高さに線を引く
+      const pulse = 0.5 + 0.5 * Math.sin(boss.chargeT * 26);
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,70,70,${0.35 + pulse * 0.4})`;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.moveTo(0, boss.chargeY - boss.y);
+      ctx.lineTo(-boss.x - 40, boss.chargeY - boss.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.shadowColor = '#ff4646';
+      ctx.shadowBlur = 12 + pulse * 16;
+      ctx.strokeStyle = `rgba(255,70,70,${0.5 + pulse * 0.4})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    } else if (boss.chargePhase === 'run') {
+      // 後方へ伸びる水しぶきの筋
+      ctx.save();
+      ctx.strokeStyle = 'rgba(220,245,255,0.45)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      for (const oy of [-R * 0.5, 0, R * 0.5]) {
+        ctx.beginPath();
+        ctx.moveTo(R * 1.2, oy);
+        ctx.lineTo(R * 1.2 + 46 + Math.random() * 26, oy);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   function drawBoss() {
     if (!boss) return;
     const R = boss.r;
     ctx.save();
     ctx.translate(boss.x, boss.y);
 
+    drawSharkChargeFx(R);
     if (boss.kind === 'crab') drawCrabBossBody(R);
     else if (boss.kind === 'squid') drawSquidBossBody(R);
     else drawSharkBossBody(R);
