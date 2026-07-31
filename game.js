@@ -23,7 +23,7 @@
   const STATE_PLAYING = 'playing';
   const STATE_PAUSED = 'paused';
   const STATE_GAMEOVER = 'gameover';
-  const STATE_CLEAR = 'clear';
+  const STATE_ENDING = 'ending';
   const STATE_CONTINUE = 'continue';
 
   let state = STATE_TITLE;
@@ -37,6 +37,8 @@
   // ライフが尽きても規定回数までは再開できる（ボス戦で尽きたならボス戦から）
   const CONTINUE_MAX = 2;
   let continuesLeft = CONTINUE_MAX;
+  let totalKills = 0;   // エンディングで見せる通算撃破数
+  let endingT = 0;      // エンディング演出の経過秒
   let checkpointAtBoss = false;
 
   // ---------- 面構成 ----------
@@ -149,7 +151,10 @@
   function maybeStartOrRestart() {
     if (state === STATE_CONTINUE) {
       continueGame();
-    } else if (state === STATE_TITLE || state === STATE_GAMEOVER || state === STATE_CLEAR) {
+    } else if (state === STATE_ENDING) {
+      // 演出の途中でうっかり飛ばさないよう、少し経ってから受け付ける
+      if (endingT > ENDING_TAP_DELAY) state = STATE_TITLE;
+    } else if (state === STATE_TITLE || state === STATE_GAMEOVER) {
       startGame();
     }
   }
@@ -174,7 +179,7 @@
       stageBannerTimer = 2.2;
       stageBannerText = `STAGE ${currentStage}`;
     } else {
-      state = STATE_CLEAR;
+      startEnding();
     }
   }
 
@@ -1399,6 +1404,98 @@
     playerBubbleTimer = 0;
   }
 
+  // ---------- エンディング ----------
+  const ENDING_TEXT_DELAY = 1.8;   // 浮上演出のあと文字が出るまで
+  const ENDING_TAP_DELAY = 3.2;    // タップを受け付けるまで
+
+  function startEnding() {
+    state = STATE_ENDING;
+    endingT = 0;
+    clearField();
+    player.spin = 0;
+  }
+
+  function updateEnding(dt) {
+    endingT += dt;
+    // 任務を終えた潜水艦がゆっくり浮上していく
+    player.y -= 34 * dt;
+    player.x += 12 * dt;
+    updatePlayerBubbles(dt);
+  }
+
+  function formatTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function drawEnding() {
+    // 海面へ近づくにつれて明るくなる
+    const light = Math.min(0.55, endingT / 7);
+    ctx.fillStyle = `rgba(180,235,255,${light})`;
+    ctx.fillRect(0, 0, W, playH);
+
+    drawPlayerBubbles();
+    if (player.y > -40) drawPlayer();
+
+    if (endingT < ENDING_TEXT_DELAY) return;
+
+    const fade = Math.min(1, (endingT - ENDING_TEXT_DELAY) / 1.2);
+    const slide = (1 - fade) * 26;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let y = H * 0.26 + slide;
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText('ALL CLEAR!', W / 2, y);
+    y += 34;
+    ctx.fillStyle = '#9fe6ff';
+    ctx.font = '15px sans-serif';
+    ctx.fillText('深海の脅威は去った', W / 2, y);
+    y += 46;
+
+    // 戦績
+    const rows = [
+      ['SCORE', `${score}`],
+      ['TIME', formatTime(elapsed)],
+      ['撃破数', `${totalKills}`],
+      ['コンティニュー', `${CONTINUE_MAX - continuesLeft} / ${CONTINUE_MAX}`]
+    ];
+    ctx.font = '15px sans-serif';
+    for (const [label, value] of rows) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText(label, W / 2 - 10, y);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(value, W / 2 + 14, y);
+      y += 26;
+    }
+
+    ctx.textAlign = 'center';
+    y += 18;
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Thanks for playing!', W / 2, y);
+
+    if (endingT > ENDING_TAP_DELAY) {
+      const blink = 0.55 + 0.45 * Math.sin(endingT * 3);
+      ctx.fillStyle = `rgba(255,255,255,${blink})`;
+      ctx.font = '15px sans-serif';
+      ctx.fillText('タップでタイトルへ', W / 2, playH * 0.9);
+    }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
   // コンティニュー。ボス戦で力尽きたならボス戦から、そうでなければそのステージの最初から
   function continueGame() {
     if (continuesLeft <= 0) return;
@@ -1431,6 +1528,8 @@
     lives = 3;
     continuesLeft = CONTINUE_MAX;
     checkpointAtBoss = false;
+    totalKills = 0;
+    endingT = 0;
     elapsed = 0;
     killCount = 0;
     enemies = [];
@@ -1456,6 +1555,10 @@
   function update(dt) {
     updateBubbles(dt);
 
+    if (state === STATE_ENDING) {
+      updateEnding(dt);
+      return;
+    }
     if (state !== STATE_PLAYING) return;
 
     updateTerrain(dt);
@@ -1608,6 +1711,7 @@
         e.dead = true;
         score += e.score;
         killCount += 1;
+        totalKills += 1;
         // フグは倒すと全方位にトゲを撒き散らす
         if (e.type === 'puffer') {
           const n = 10;
@@ -1656,7 +1760,7 @@
           stageBannerTimer = 2.2;
           stageBannerText = `STAGE ${currentStage}`;
         } else {
-          state = STATE_CLEAR;
+          startEnding();
         }
       }
     }
@@ -3115,7 +3219,9 @@
       if (state !== STATE_CONTINUE) drawPauseButton();
     }
 
-    if (state === STATE_TITLE) {
+    if (state === STATE_ENDING) {
+      drawEnding();
+    } else if (state === STATE_TITLE) {
       drawCenterText([
         { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
         { text: 'タップでスタート', font: '18px sans-serif' }
@@ -3137,12 +3243,6 @@
     } else if (state === STATE_GAMEOVER) {
       drawCenterText([
         { text: 'GAME OVER', font: 'bold 26px sans-serif' },
-        { text: `SCORE ${score}`, font: '18px sans-serif' },
-        { text: 'タップでリスタート', font: '16px sans-serif' }
-      ]);
-    } else if (state === STATE_CLEAR) {
-      drawCenterText([
-        { text: 'ALL CLEAR!', font: 'bold 26px sans-serif' },
         { text: `SCORE ${score}`, font: '18px sans-serif' },
         { text: 'タップでリスタート', font: '16px sans-serif' }
       ]);
