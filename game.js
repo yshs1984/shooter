@@ -3691,7 +3691,8 @@
       drawEnding();
     } else if (state === STATE_TITLE) {
       const titleLines = [
-        { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
+        { text: 'DEEP DIVER', font: 'bold 40px sans-serif' },
+        { text: '深海潜航作戦', font: '15px sans-serif', color: '#9fe6ff' },
         { text: 'タップでスタート', font: '18px sans-serif' }
       ];
       if (highScore > 0) {
