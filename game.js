@@ -18,6 +18,102 @@
   }
   window.addEventListener('resize', resize);
 
+  // ---------- サウンド ----------
+  // 音源ファイルは持たず Web Audio で合成する（ビルド不要・アセット不要の構成を維持するため）
+  let audioCtx = null;
+  let masterGain = null;
+  let muted = false;
+
+  // モバイルは最初のユーザー操作までAudioContextを開始できないため、入力時に呼ぶ
+  function initAudio() {
+    if (audioCtx) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = new AC();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = muted ? 0 : 0.9;
+    masterGain.connect(audioCtx.destination);
+  }
+
+  function setMuted(v) {
+    muted = v;
+    if (masterGain) masterGain.gain.value = muted ? 0 : 0.9;
+  }
+
+  // 減衰する単音。周波数を from→to へ滑らせる
+  function playTone(opts) {
+    if (!audioCtx || muted) return;
+    const t0 = audioCtx.currentTime;
+    const dur = opts.dur;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = opts.type || 'square';
+    osc.frequency.setValueAtTime(opts.from, t0);
+    if (opts.to && opts.to !== opts.from) {
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.to), t0 + dur);
+    }
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(opts.vol, t0 + Math.min(0.012, dur * 0.3));
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain);
+    gain.connect(masterGain);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  // ホワイトノイズ（爆発・被弾などの破裂音向け）
+  function playNoise(opts) {
+    if (!audioCtx || muted) return;
+    const t0 = audioCtx.currentTime;
+    const dur = opts.dur;
+    const frames = Math.floor(audioCtx.sampleRate * dur);
+    const buf = audioCtx.createBuffer(1, frames, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < frames; i++) {
+      // 後半ほど小さくして、ぼわっと消えるようにする
+      data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = opts.filterType || 'lowpass';
+    filter.frequency.setValueAtTime(opts.freq, t0);
+    if (opts.freqTo) filter.frequency.exponentialRampToValueAtTime(Math.max(1, opts.freqTo), t0 + dur);
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(opts.vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+
+  const SFX = {
+    shot:      () => playTone({ type: 'square',   from: 900,  to: 420,  dur: 0.06, vol: 0.05 }),
+    enemyKill: () => playNoise({ dur: 0.16, freq: 1600, freqTo: 300, vol: 0.20 }),
+    bossHit:   () => playTone({ type: 'square',   from: 260,  to: 190,  dur: 0.05, vol: 0.05 }),
+    hit:       () => playNoise({ dur: 0.36, freq: 700,  freqTo: 90,  vol: 0.38 }),
+    shieldOff: () => playTone({ type: 'triangle', from: 780,  to: 240,  dur: 0.22, vol: 0.20 }),
+    item:      () => { playTone({ type: 'triangle', from: 660, to: 660, dur: 0.07, vol: 0.16 });
+                       setTimeout(() => playTone({ type: 'triangle', from: 990, to: 990, dur: 0.11, vol: 0.16 }), 70); },
+    bossAppear:() => playTone({ type: 'sawtooth', from: 70,   to: 180,  dur: 0.9,  vol: 0.20 }),
+    bossDown:  () => { playNoise({ dur: 0.9, freq: 900, freqTo: 60, vol: 0.45 });
+                       playTone({ type: 'sawtooth', from: 200, to: 40, dur: 0.9, vol: 0.18 }); },
+    stage:     () => { playTone({ type: 'triangle', from: 520, to: 520, dur: 0.12, vol: 0.18 });
+                       setTimeout(() => playTone({ type: 'triangle', from: 780, to: 780, dur: 0.18, vol: 0.18 }), 130); },
+    gameOver:  () => playTone({ type: 'sawtooth', from: 320,  to: 60,   dur: 1.1,  vol: 0.24 }),
+    clear:     () => {
+      // 上昇するアルペジオ
+      [523, 659, 784, 1047].forEach((f, i) => {
+        setTimeout(() => playTone({ type: 'triangle', from: f, to: f, dur: 0.3, vol: 0.18 }), i * 140);
+      });
+    }
+  };
+
   // ---------- ゲーム状態 ----------
   const STATE_TITLE = 'title';
   const STATE_PLAYING = 'playing';
@@ -82,6 +178,7 @@
   const MOUSE_ID = 'mouse';
 
   let pauseButton = { x: 0, y: 0, w: 0, h: 0 };
+  let muteButton = { x: 0, y: 0, w: 0, h: 0 };
   let restartButton = { x: 0, y: 0, w: 0, h: 0 };
 
   const KEY_DIRECTIONS = {
@@ -109,6 +206,7 @@
 
     const pbSize = 40;
     pauseButton = { x: W - pbSize - 12, y: 12, w: pbSize, h: pbSize };
+    muteButton = { x: W - pbSize * 2 - 20, y: 12, w: pbSize, h: pbSize };
     const rbW = 170, rbH = 46;
     restartButton = { x: W / 2 - rbW / 2, y: H / 2 + 30, w: rbW, h: rbH };
 
@@ -209,6 +307,13 @@
 
   // ポーズ関連のボタンをタップした場合はtrueを返し、通常の入力処理（操作ボタン・スタート判定）を行わせない
   function handlePointerDown(pos) {
+    // 最初のユーザー操作でAudioContextを起こす（モバイルの自動再生制限のため）
+    initAudio();
+    // ミュートボタンは表示されている画面でだけ反応させる
+    if (muteButtonVisible() && inRect(pos.x, pos.y, muteButton)) {
+      setMuted(!muted);
+      return true;
+    }
     if (handleDebugPointerDown(pos)) return true;
     if (state === STATE_PLAYING && inRect(pos.x, pos.y, pauseButton)) {
       togglePause();
@@ -268,6 +373,12 @@
   }
 
   function onKeyDown(e) {
+    initAudio();
+    if (e.code === 'KeyM') {
+      e.preventDefault();
+      setMuted(!muted);
+      return;
+    }
     const dir = KEY_DIRECTIONS[e.code];
     if (dir) {
       e.preventDefault();
@@ -1132,6 +1243,7 @@
   function spawnBoss() {
     // ここ以降に力尽きたらボス戦から再開する
     checkpointAtBoss = true;
+    SFX.bossAppear();
     const def = STAGE_BOSSES[currentStage - 1];
     const baseX = W - 140;
     boss = {
@@ -1362,6 +1474,7 @@
       if (dist(it.x, it.y, player.x, player.y) < it.r + player.hitRadius) {
         it.picked = true;
         applyItem(it.type);
+        SFX.item();
       }
     }
     items = items.filter(it => !it.picked);
@@ -1379,13 +1492,16 @@
       // バリアは規定回数ぶん被弾を肩代わりし、尽きた時だけ消滅演出を出す
       player.shieldHp -= 1;
       player.invuln = 0.6;
+      SFX.shieldOff();
       if (player.shieldHp === 0) player.shieldPopTimer = 0.4;
       return;
     }
     lives -= 1;
     player.invuln = 1.5;
+    SFX.hit();
     if (lives <= 0) {
       state = continuesLeft > 0 ? STATE_CONTINUE : STATE_GAMEOVER;
+      SFX.gameOver();
     }
   }
 
@@ -1413,6 +1529,7 @@
     endingT = 0;
     clearField();
     player.spin = 0;
+    SFX.clear();
   }
 
   function updateEnding(dt) {
@@ -1608,6 +1725,7 @@
     if (player.fireCooldown <= 0) {
       player.fireCooldown = player.rapidFire ? RAPID_FIRE_INTERVAL : BASE_FIRE_INTERVAL;
       spawnPlayerBullet();
+      SFX.shot();
     }
 
     for (const b of playerBullets) {
@@ -1712,6 +1830,7 @@
         score += e.score;
         killCount += 1;
         totalKills += 1;
+        SFX.enemyKill();
         // フグは倒すと全方位にトゲを撒き散らす
         if (e.type === 'puffer') {
           const n = 10;
@@ -1743,11 +1862,13 @@
             b.hit = true;
           }
           boss.hp -= 1;
+          SFX.bossHit();
         }
       }
       if (boss.hp <= 0) {
         score += STAGE_BOSSES[currentStage - 1].score;
         boss = null;
+        SFX.bossDown();
         // ボスを倒したので、次に力尽きたときはステージ最初からに戻す
         checkpointAtBoss = false;
         if (currentStage < STAGE_BOSSES.length) {
@@ -1759,6 +1880,7 @@
           spawnTimer = Math.max(spawnTimer, 1.2);
           stageBannerTimer = 2.2;
           stageBannerText = `STAGE ${currentStage}`;
+          SFX.stage();
         } else {
           startEnding();
         }
@@ -3106,6 +3228,56 @@
     ctx.restore();
   }
 
+  function muteButtonVisible() {
+    return state === STATE_TITLE || state === STATE_PLAYING || state === STATE_PAUSED;
+  }
+
+  function drawMuteButton() {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    roundRect(muteButton.x, muteButton.y, muteButton.w, muteButton.h, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    const cx = muteButton.x + muteButton.w / 2;
+    const cy = muteButton.y + muteButton.h / 2;
+    ctx.fillStyle = muted ? 'rgba(223,247,255,0.45)' : '#dff7ff';
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+
+    // スピーカー本体
+    ctx.beginPath();
+    ctx.moveTo(cx - 9, cy - 3);
+    ctx.lineTo(cx - 5, cy - 3);
+    ctx.lineTo(cx - 1, cy - 8);
+    ctx.lineTo(cx - 1, cy + 8);
+    ctx.lineTo(cx - 5, cy + 3);
+    ctx.lineTo(cx - 9, cy + 3);
+    ctx.closePath();
+    ctx.fill();
+
+    if (muted) {
+      // ミュート時はバツ印
+      ctx.beginPath();
+      ctx.moveTo(cx + 3, cy - 5);
+      ctx.lineTo(cx + 11, cy + 5);
+      ctx.moveTo(cx + 11, cy - 5);
+      ctx.lineTo(cx + 3, cy + 5);
+      ctx.stroke();
+    } else {
+      // 音が出ているときは音波
+      ctx.beginPath();
+      ctx.arc(cx - 1, cy, 6, -Math.PI / 3, Math.PI / 3);
+      ctx.moveTo(cx + 8, cy - 5);
+      ctx.arc(cx - 1, cy, 10, -Math.PI / 3.4, Math.PI / 3.4);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawPauseOverlay() {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(0, 0, W, H);
@@ -3216,7 +3388,10 @@
       drawControls();
       if (state === STATE_PLAYING && stageBannerTimer > 0) drawStageBanner();
       if (state === STATE_PAUSED) drawPauseOverlay();
-      if (state !== STATE_CONTINUE) drawPauseButton();
+      if (state !== STATE_CONTINUE) {
+        drawPauseButton();
+        drawMuteButton();
+      }
     }
 
     if (state === STATE_ENDING) {
@@ -3230,6 +3405,9 @@
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(GAME_VERSION, W / 2, H - 14);
+      ctx.textAlign = 'left';
+      drawMuteButton();
+      ctx.textAlign = 'center';
       ctx.textAlign = 'left';
     } else if (state === STATE_CONTINUE) {
       drawCenterText([
