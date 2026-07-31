@@ -6,6 +6,34 @@
   // バージョン番号は version.js（自動生成ファイル）で定義される
   const GAME_VERSION = window.GAME_VERSION || 'v0.0.0';
 
+  // ---------- ハイスコア（localStorageに保存） ----------
+  const HIGH_SCORE_KEY = 'shooter.highScore';
+  let highScore = 0;
+  let newRecord = false;   // 今回のプレイで更新したか
+
+  function loadHighScore() {
+    try {
+      const v = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10);
+      highScore = Number.isFinite(v) && v > 0 ? v : 0;
+    } catch (e) {
+      // プライベートモードなどでlocalStorageが使えない場合は0のまま続行する
+      highScore = 0;
+    }
+  }
+
+  // ゲーム終了時に呼ぶ。更新したらtrueを返す
+  function saveHighScore() {
+    if (score <= highScore) return false;
+    highScore = score;
+    newRecord = true;
+    try {
+      localStorage.setItem(HIGH_SCORE_KEY, String(highScore));
+    } catch (e) {
+      // 保存できなくても表示だけは更新しておく
+    }
+    return true;
+  }
+
   let W = 0, H = 0, DPR = 1, playH = 0, controlBarH = 0;
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -1593,6 +1621,7 @@
     SFX.hit();
     if (lives <= 0) {
       state = continuesLeft > 0 ? STATE_CONTINUE : STATE_GAMEOVER;
+      if (state === STATE_GAMEOVER) saveHighScore();
       SFX.gameOver();
     }
   }
@@ -1624,6 +1653,7 @@
     endingT = 0;
     clearField();
     player.spin = 0;
+    saveHighScore();
     SFX.clear();
   }
 
@@ -1670,11 +1700,18 @@
     ctx.fillStyle = '#9fe6ff';
     ctx.font = '15px sans-serif';
     ctx.fillText('深海の脅威は去った', W / 2, y);
-    y += 46;
+    y += 30;
+    if (newRecord) {
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('NEW RECORD!', W / 2, y);
+    }
+    y += 30;
 
     // 戦績
     const rows = [
       ['SCORE', `${score}`],
+      ['BEST', `${highScore}`],
       ['TIME', formatTime(elapsed)],
       ['撃破数', `${totalKills}`],
       ['コンティニュー', `${CONTINUE_MAX - continuesLeft} / ${CONTINUE_MAX}`]
@@ -1737,6 +1774,7 @@
   function startGame() {
     state = STATE_PLAYING;
     score = 0;
+    newRecord = false;
     lives = 3;
     continuesLeft = CONTINUE_MAX;
     checkpointAtBoss = false;
@@ -3248,6 +3286,16 @@
     ctx.font = '16px sans-serif';
     ctx.textBaseline = 'top';
     ctx.fillText(`SCORE ${score}`, 12, 12);
+    if (highScore > 0) {
+      // 記録を抜いた瞬間からプレイ中もNEW RECORDを出す
+      const beating = score > highScore;
+      const sw = ctx.measureText(`SCORE ${score}`).width;
+      ctx.fillStyle = beating ? '#ffd76a' : 'rgba(255,255,255,0.5)';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(beating ? 'NEW RECORD' : `BEST ${highScore}`, 12 + sw + 12, 16);
+      ctx.fillStyle = '#fff';
+      ctx.font = '16px sans-serif';
+    }
     const lifeText = 'LIFE ' + '♥'.repeat(Math.max(0, lives));
     ctx.fillText(lifeText, 12, 34);
     // 残りコンティニュー回数（減っているときだけ出す）。幅は描画に使った16pxのまま測る
@@ -3460,6 +3508,7 @@
     let y = H / 2 - (lines.length - 1) * 16;
     for (const line of lines) {
       ctx.font = line.font || '22px sans-serif';
+      ctx.fillStyle = line.color || '#fff';
       ctx.fillText(line.text, W / 2, y);
       y += 32;
     }
@@ -3513,18 +3562,20 @@
     if (state === STATE_ENDING) {
       drawEnding();
     } else if (state === STATE_TITLE) {
-      drawCenterText([
+      const titleLines = [
         { text: '横スクロールシューティング', font: 'bold 24px sans-serif' },
         { text: 'タップでスタート', font: '18px sans-serif' }
-      ]);
+      ];
+      if (highScore > 0) {
+        titleLines.push({ text: `BEST ${highScore}`, font: '15px sans-serif' });
+      }
+      drawCenterText(titleLines);
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(GAME_VERSION, W / 2, H - 14);
       ctx.textAlign = 'left';
       drawMuteButton();
-      ctx.textAlign = 'center';
-      ctx.textAlign = 'left';
     } else if (state === STATE_CONTINUE) {
       drawCenterText([
         { text: 'CONTINUE?', font: 'bold 26px sans-serif' },
@@ -3538,6 +3589,9 @@
       drawCenterText([
         { text: 'GAME OVER', font: 'bold 26px sans-serif' },
         { text: `SCORE ${score}`, font: '18px sans-serif' },
+        newRecord
+          ? { text: 'NEW RECORD!', font: 'bold 17px sans-serif', color: '#ffd76a' }
+          : { text: `BEST ${highScore}`, font: '15px sans-serif', color: 'rgba(255,255,255,0.65)' },
         { text: 'タップでリスタート', font: '16px sans-serif' }
       ]);
     }
@@ -3556,6 +3610,7 @@
     requestAnimationFrame(loop);
   }
 
+  loadHighScore();
   resize();
   initBubbles();
   resetPlayer();
