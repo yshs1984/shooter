@@ -794,7 +794,17 @@
   // ---------- 敵 ----------
   let enemies = [];
   let spawnTimer = 0;
-  let spawnInterval = 1.4;
+  // 敵の出現間隔。ステージが進むほど、またステージ内で撃破が進むほど詰まっていく
+  const SPAWN_INTERVAL_BASE = 1.45;   // ステージ1の開始時
+  const SPAWN_INTERVAL_PER_STAGE = 0.15;  // ステージごとに短くする量
+  const SPAWN_INTERVAL_PROGRESS = 0.38;   // ステージ内の進行で短くする割合
+  const SPAWN_INTERVAL_MIN = 0.55;    // これ以上は詰めない（理不尽さの下限）
+
+  function currentSpawnInterval() {
+    const base = SPAWN_INTERVAL_BASE - (currentStage - 1) * SPAWN_INTERVAL_PER_STAGE;
+    const progress = Math.min(1, killCount / BOSS_KILL_THRESHOLD);
+    return Math.max(SPAWN_INTERVAL_MIN, base * (1 - progress * SPAWN_INTERVAL_PROGRESS));
+  }
 
   // ステージごとの出現テーブル（重み）。進むほど新しい敵が混ざるようにする
   const STAGE_ENEMY_WEIGHTS = [
@@ -1899,10 +1909,12 @@
       spawnTimer -= dt;
       if (spawnTimer <= 0) {
         if (diveMode === 'diving') {
-          spawnTimer = 0.9;
+          // 潜航中は深く潜るほど詰める
+          const t = Math.min(1, diveDepth / DIVE_BOTTOM_DEPTH);
+          spawnTimer = 0.95 - t * 0.3;
           spawnDiveEnemy();
         } else {
-          spawnTimer = spawnInterval;
+          spawnTimer = currentSpawnInterval();
           spawnEnemy();
         }
       }
