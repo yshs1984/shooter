@@ -3638,7 +3638,7 @@
       ctx.font = line.font || '22px sans-serif';
       ctx.fillStyle = line.color || '#fff';
       ctx.fillText(line.text, W / 2, y);
-      y += 32;
+      y += line.gap || 32;   // 大きい文字の行は個別に間隔を広げられる
     }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
@@ -3691,8 +3691,7 @@
       drawEnding();
     } else if (state === STATE_TITLE) {
       const titleLines = [
-        { text: 'DEEP DIVER', font: 'bold 40px sans-serif' },
-        { text: '深海潜航作戦', font: '15px sans-serif', color: '#9fe6ff' },
+        { text: 'DEEP DIVER', font: 'bold 40px sans-serif', gap: 50 },
         { text: 'タップでスタート', font: '18px sans-serif' }
       ];
       if (highScore > 0) {
