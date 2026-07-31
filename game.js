@@ -977,6 +977,95 @@
     }
   }
 
+  // ---------- 撃破・被弾の見た目のフィードバック ----------
+  // 破片の色は敵の見た目に合わせる
+  const ENEMY_BURST_COLORS = {
+    straight: '#c0304a',  // ピラニア
+    sine: '#b9932f',      // 毒クラゲ
+    riser: '#b9932f',
+    shooter: '#8f3d16',   // ウニ
+    marlin: '#35618f',    // カジキ
+    moray: '#5c8f56',     // ウツボ
+    puffer: '#e8c46b',    // フグ
+    octopus: '#8e4bb0',   // タコ
+    angler: '#2b2036'     // チョウチンアンコウ
+  };
+
+  let particles = [];
+  let shakeT = 0;      // 残り時間
+  let shakeMag = 0;    // 揺れ幅(px)
+
+  // 破片を放射状に散らす
+  function spawnBurst(x, y, color, count, speed, size) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = speed * (0.35 + Math.random() * 0.65);
+      const life = 0.28 + Math.random() * 0.34;
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life, maxLife: life,
+        size: size * (0.5 + Math.random() * 0.8),
+        color
+      });
+    }
+  }
+
+  function shakeScreen(mag, dur) {
+    // 連続被弾で揺れが増幅しすぎないよう、強い方を採用する
+    shakeMag = Math.max(shakeMag, mag);
+    shakeT = Math.max(shakeT, dur);
+  }
+
+  function updateEffects(dt) {
+    for (const e of enemies) {
+      if (e.flash > 0) e.flash -= dt;
+    }
+    if (boss && boss.flash > 0) boss.flash -= dt;
+    for (const p of particles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.94;   // 水中なので減速させる
+      p.vy *= 0.94;
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+    if (shakeT > 0) {
+      shakeT -= dt;
+      if (shakeT <= 0) shakeMag = 0;
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const k = Math.max(0, p.life / p.maxLife);
+      ctx.globalAlpha = k;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.4 + k * 0.6), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ダメージを受けた敵・ボスを一瞬光らせる（形を問わず使えるよう加算合成の光を重ねる）
+  function drawHitFlash(o) {
+    if (!o.flash || o.flash <= 0) return;
+    const k = Math.min(1, o.flash / 0.12);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = k * 0.75;
+    const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * 1.25);
+    g.addColorStop(0, 'rgba(255,255,255,0.95)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, o.r * 1.25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // ---------- タコの墨（視界を奪うだけでダメージはない） ----------
   let inkClouds = [];
 
@@ -1492,12 +1581,15 @@
       // バリアは規定回数ぶん被弾を肩代わりし、尽きた時だけ消滅演出を出す
       player.shieldHp -= 1;
       player.invuln = 0.6;
+      shakeScreen(3, 0.18);
       SFX.shieldOff();
       if (player.shieldHp === 0) player.shieldPopTimer = 0.4;
       return;
     }
     lives -= 1;
     player.invuln = 1.5;
+    spawnBurst(player.x, player.y, '#9fe6ff', 16, 240, 4);
+    shakeScreen(7, 0.34);
     SFX.hit();
     if (lives <= 0) {
       state = continuesLeft > 0 ? STATE_CONTINUE : STATE_GAMEOVER;
@@ -1513,6 +1605,9 @@
     items = [];
     escorts = [];
     inkClouds = [];
+    particles = [];
+    shakeT = 0;
+    shakeMag = 0;
     resetWhirlpools();
     boss = null;
     spawnTimer = 1.2;
@@ -1655,6 +1750,9 @@
     items = [];
     escorts = [];
     inkClouds = [];
+    particles = [];
+    shakeT = 0;
+    shakeMag = 0;
     boss = null;
     resetVolcanoes();
     resetWhirlpools();
@@ -1805,6 +1903,7 @@
 
     // 墨はボス戦中も流れ続ける
     updateInk(dt);
+    updateEffects(dt);
 
     // 自機弾 vs 敵
     for (const e of enemies) {
@@ -1821,6 +1920,7 @@
             b.hit = true;
           }
           e.hp -= 1;
+          e.flash = 0.12;
         }
       }
     }
@@ -1831,6 +1931,7 @@
         killCount += 1;
         totalKills += 1;
         SFX.enemyKill();
+        spawnBurst(e.x, e.y, ENEMY_BURST_COLORS[e.type] || '#ff8f6a', 10, 190, 3);
         // フグは倒すと全方位にトゲを撒き散らす
         if (e.type === 'puffer') {
           const n = 10;
@@ -1862,11 +1963,15 @@
             b.hit = true;
           }
           boss.hp -= 1;
+          boss.flash = 0.12;
           SFX.bossHit();
         }
       }
       if (boss.hp <= 0) {
         score += STAGE_BOSSES[currentStage - 1].score;
+        spawnBurst(boss.x, boss.y, '#ffd166', 34, 320, 6);
+        spawnBurst(boss.x, boss.y, '#ff6a4a', 22, 210, 5);
+        shakeScreen(9, 0.5);
         boss = null;
         SFX.bossDown();
         // ボスを倒したので、次に力尽きたときはステージ最初からに戻す
@@ -2549,6 +2654,7 @@
       else if (e.type === 'octopus') drawOctopusEnemy(e);
       else if (e.type === 'angler') drawAnglerEnemy(e);
       else drawFishEnemy(e);
+      drawHitFlash(e);
     }
   }
 
@@ -2861,6 +2967,7 @@
     else drawSharkBossBody(R);
 
     ctx.restore();
+    drawHitFlash(boss);
 
     const barW = Math.min(220, W - 140);
     const barX = W - barW - 16;
@@ -3365,6 +3472,12 @@
 
     // コンティニュー確認中も、どこで力尽きたか分かるよう盤面を残したまま上に重ねる
     if (state === STATE_PLAYING || state === STATE_PAUSED || state === STATE_CONTINUE) {
+      // 揺らすのは盤面だけ。HUDや操作ボタンは動かさない
+      ctx.save();
+      if (shakeT > 0) {
+        const k = shakeMag * Math.min(1, shakeT / 0.2);
+        ctx.translate((Math.random() - 0.5) * k * 2, (Math.random() - 0.5) * k * 2);
+      }
       if (diveMode === 'diving') {
         drawDepthDarkness();
         drawCaveWalls();
@@ -3382,8 +3495,11 @@
       drawEscorts();
       drawShieldEffect();
       drawPlayer();
+      drawParticles();
       // 墨は自機や敵の上に被せて視界を奪う（HUDより下）
       drawInk();
+      ctx.restore();
+
       drawHud();
       drawControls();
       if (state === STATE_PLAYING && stageBannerTimer > 0) drawStageBanner();
