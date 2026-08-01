@@ -782,7 +782,7 @@
     } else if (player.bulletType === 'pierce') {
       push(BULLET_SPEED, 0, { r: 5, type: 'pierce', pierce: true });
     } else if (player.bulletType === 'wide') {
-      push(BULLET_SPEED * 0.85, 0, { r: 10, type: 'wide', dmg: 2 });
+      push(BULLET_SPEED, 0, { r: 10, type: 'wide' });
     } else if (player.bulletType === 'torpedo') {
       push(BULLET_SPEED, 0, { r: 7, type: 'torpedo', dmg: TORPEDO_DAMAGE });
     } else {
