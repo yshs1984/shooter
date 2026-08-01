@@ -599,7 +599,23 @@
         mountain = Math.cos((t * Math.PI) / 2) ** 2 * m.peakH;
       }
     }
-    return (rolling + jag + mountain) * holeMask(worldX);
+    return (rolling + jag + mountain) * holeMask(worldX) * bossArenaScale();
+  }
+
+  // ボス戦中は海底を低くして、ボスに追い立てられて地形に潰される事故を減らす。
+  // 切り替わりで地形が瞬間的に変形しないよう、時間をかけて上下させる
+  const BOSS_ARENA_FLATTEN = 0.45;   // ボス戦中の海底の高さの倍率
+  let bossArenaT = 0;                // 0=通常, 1=ボス戦の低い海底
+
+  function updateBossArena(dt) {
+    const target = boss ? 1 : 0;
+    const rate = dt / 1.2;
+    if (bossArenaT < target) bossArenaT = Math.min(target, bossArenaT + rate);
+    else if (bossArenaT > target) bossArenaT = Math.max(target, bossArenaT - rate);
+  }
+
+  function bossArenaScale() {
+    return 1 - (1 - BOSS_ARENA_FLATTEN) * bossArenaT;
   }
 
   // 大穴の内側では海底の高さを0にする（縁はなめらかに落として崖に見せる）
@@ -802,6 +818,8 @@
   const SPAWN_INTERVAL_PER_STAGE = 0.15;  // ステージごとに短くする量
   const SPAWN_INTERVAL_PROGRESS = 0.38;   // ステージ内の進行で短くする割合
   const SPAWN_INTERVAL_MIN = 0.55;    // これ以上は詰めない（理不尽さの下限）
+  // ボス戦中の敵の出現間隔。ボスの相手をしながらなので通常より大幅に緩くする
+  const BOSS_FIGHT_SPAWN_INTERVAL = 2.6;
 
   function currentSpawnInterval() {
     const base = SPAWN_INTERVAL_BASE - (currentStage - 1) * SPAWN_INTERVAL_PER_STAGE;
@@ -1369,6 +1387,8 @@
     shark: [-60, 0, 60],
     crab: [-110, -55, 0, 55, 110]
   };
+  // サメの3方向弾の角度（正面＝左からのずれ。約±30度）
+  const SHARK_FIRE_ANGLES = [-0.52, 0, 0.52];
 
   function spawnBoss() {
     // ここ以降に力尽きたらボス戦から再開する
@@ -1577,6 +1597,15 @@
             { r: 7 + Math.random() * 4, kind: 'bubble' }
           );
         }
+      } else if (boss.kind === 'shark') {
+        // サメは自機を狙わず、正面（左）と斜め上下の固定3方向へ撃つ。
+        // 狙い撃ちは反応し続けることを強制するが、固定角度なら位置取りで避けられる
+        boss.fireCooldown = 1.6;
+        const speed = 220;
+        for (const a of SHARK_FIRE_ANGLES) {
+          const ang = Math.PI + a;   // Math.PI = 左向き
+          spawnEnemyBullet(boss.x, boss.y, Math.cos(ang) * speed, Math.sin(ang) * speed);
+        }
       } else {
         boss.fireCooldown = 0.9;
         const speed = 220;
@@ -1594,6 +1623,8 @@
   // ---------- アイテム ----------
   let items = [];
   const ITEM_DROP_CHANCE = 0.22;
+  // ボス戦中は数が少ないぶんドロップしやすくして、確実に補給できるようにする
+  const ITEM_DROP_CHANCE_BOSS = 0.55;
   const SHIELD_MAX_HITS = 2;  // バリアが耐えられる被弾回数
   const BULLET_ITEM_TYPES = ['spread', 'homing', 'pierce', 'wide'];
   const ITEM_TYPES = [...BULLET_ITEM_TYPES, 'rapid', 'speed', 'shield', 'heal', 'escort'];
@@ -1873,6 +1904,7 @@
     shakeT = 0;
     shakeMag = 0;
     boss = null;
+    bossArenaT = 0;
     resetVolcanoes();
     resetWhirlpools();
     resetDive();
@@ -1896,6 +1928,7 @@
     if (state !== STATE_PLAYING) return;
 
     updateTerrain(dt);
+    updateBossArena(dt);
 
     elapsed += dt;
     if (player.invuln > 0) player.invuln -= dt;
@@ -1989,12 +2022,6 @@
           spawnEnemy();
         }
       }
-      for (const e of enemies) updateEnemy(e, dt);
-      enemies = enemies.filter(e =>
-        e.x > -40 && e.y > -60 && e.y < playH + 80 &&
-        // ウツボは海底に張り付いているので地形判定では消さない
-        (e.type === 'moray' || !collidesWorld(e.x, e.y, e.r))
-      );
 
       // ステージごとの障害（ステージ2は渦、ステージ3は大穴＝潜航、その他は火山）
       if (currentStage === WHIRLPOOL_STAGE) {
@@ -2020,7 +2047,22 @@
       }
     } else {
       updateBoss(dt);
+      // ボス戦中も通常の敵を少しずつ出す。
+      // コンティニュー直後はアイテムを失っているため、補給の機会がないとボスに勝てない
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) {
+        spawnTimer = BOSS_FIGHT_SPAWN_INTERVAL;
+        spawnEnemy();
+      }
     }
+
+    // 敵の更新はボス戦中も行う
+    for (const e of enemies) updateEnemy(e, dt);
+    enemies = enemies.filter(e =>
+      e.x > -40 && e.y > -60 && e.y < playH + 80 &&
+      // ウツボは海底に張り付いているので地形判定では消さない
+      (e.type === 'moray' || !collidesWorld(e.x, e.y, e.r))
+    );
 
     // 墨はボス戦中も流れ続ける
     updateInk(dt);
@@ -2062,7 +2104,8 @@
             spawnEnemyBullet(e.x, e.y, Math.cos(a) * speed, Math.sin(a) * speed, { r: 5, kind: 'spike' });
           }
         }
-        if (Math.random() < ITEM_DROP_CHANCE) spawnItem(e.x, e.y);
+        const dropChance = boss ? ITEM_DROP_CHANCE_BOSS : ITEM_DROP_CHANCE;
+        if (Math.random() < dropChance) spawnItem(e.x, e.y);
       }
     }
     enemies = enemies.filter(e => !e.dead);
