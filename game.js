@@ -753,6 +753,8 @@
   const HOMING_TURN_RATE = 2.2;  // 最大旋回速度(rad/s)
   const HOMING_RANGE = 230;      // この距離より遠い敵は追わない(px)
   const BASE_FIRE_INTERVAL = 0.38;
+  const TORPEDO_DAMAGE = 4;      // 魚雷1発の威力
+  const TORPEDO_FIRE_MULT = 2.0; // 魚雷の発射間隔の倍率
   const RAPID_FIRE_INTERVAL = 0.15;
   const MOVE_SPEED_NORMAL = 260;
   const MOVE_SPEED_BOOST = 400;
@@ -780,7 +782,9 @@
     } else if (player.bulletType === 'pierce') {
       push(BULLET_SPEED, 0, { r: 5, type: 'pierce', pierce: true });
     } else if (player.bulletType === 'wide') {
-      push(BULLET_SPEED * 0.85, 0, { r: 10, type: 'wide' });
+      push(BULLET_SPEED * 0.85, 0, { r: 10, type: 'wide', dmg: 2 });
+    } else if (player.bulletType === 'torpedo') {
+      push(BULLET_SPEED, 0, { r: 7, type: 'torpedo', dmg: TORPEDO_DAMAGE });
     } else {
       push(BULLET_SPEED, 0, { r: 4, type: 'normal' });
     }
@@ -1626,7 +1630,7 @@
   // ボス戦中は数が少ないぶんドロップしやすくして、確実に補給できるようにする
   const ITEM_DROP_CHANCE_BOSS = 0.55;
   const SHIELD_MAX_HITS = 2;  // バリアが耐えられる被弾回数
-  const BULLET_ITEM_TYPES = ['spread', 'homing', 'pierce', 'wide'];
+  const BULLET_ITEM_TYPES = ['spread', 'homing', 'pierce', 'wide', 'torpedo'];
   const ITEM_TYPES = [...BULLET_ITEM_TYPES, 'rapid', 'speed', 'shield', 'heal', 'escort'];
 
   function spawnItem(x, y) {
@@ -1973,7 +1977,9 @@
 
     player.fireCooldown -= dt;
     if (player.fireCooldown <= 0) {
-      player.fireCooldown = player.rapidFire ? RAPID_FIRE_INTERVAL : BASE_FIRE_INTERVAL;
+      const interval = player.rapidFire ? RAPID_FIRE_INTERVAL : BASE_FIRE_INTERVAL;
+      // 魚雷は一撃が重いぶん発射間隔が長い
+      player.fireCooldown = interval * (player.bulletType === 'torpedo' ? TORPEDO_FIRE_MULT : 1);
       spawnPlayerBullet();
       SFX.shot();
     }
@@ -2082,7 +2088,7 @@
           } else {
             b.hit = true;
           }
-          e.hp -= 1;
+          e.hp -= b.dmg || 1;
           e.flash = 0.12;
         }
       }
@@ -2126,7 +2132,7 @@
           } else {
             b.hit = true;
           }
-          boss.hp -= 1;
+          boss.hp -= b.dmg || 1;
           boss.flash = 0.12;
           SFX.bossHit();
         }
@@ -3189,12 +3195,34 @@
 
   const BULLET_COLORS = {
     normal: '#e8ffff', spread: '#8bffb0', homing: '#ff6fd8',
-    pierce: '#ffd166', wide: '#5ad1ff', escort: '#7ef0c0'
+    pierce: '#ffd166', wide: '#5ad1ff', escort: '#7ef0c0', torpedo: '#ffe08a'
   };
 
   function drawBullets() {
     for (const b of playerBullets) {
       ctx.fillStyle = BULLET_COLORS[b.type] || BULLET_COLORS.normal;
+      if (b.type === 'torpedo') {
+        // 魚雷は葉巻型に尾びれ。進行方向を向かせる
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.beginPath();
+        ctx.ellipse(0, 0, b.r * 1.7, b.r * 0.72, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(-b.r * 1.3, 0);
+        ctx.lineTo(-b.r * 2.1, -b.r * 0.85);
+        ctx.lineTo(-b.r * 2.1, b.r * 0.85);
+        ctx.closePath();
+        ctx.fill();
+        // 弾頭の光
+        ctx.fillStyle = '#fff6d8';
+        ctx.beginPath();
+        ctx.arc(b.r * 1.1, 0, b.r * 0.34, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        continue;
+      }
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
@@ -3359,11 +3387,11 @@
   const ITEM_COLORS = {
     spread: '#8bffb0', homing: '#ff6fd8', pierce: '#ffd166', wide: '#5ad1ff',
     rapid: '#ff9f45', speed: '#a685ff', shield: '#66e0c8', heal: '#ff8fa3',
-    escort: '#7ef0c0'
+    escort: '#7ef0c0', torpedo: '#ffe08a'
   };
   const ITEM_LABELS = {
     spread: '3', homing: 'H', pierce: 'P', wide: 'W',
-    rapid: 'R', speed: 'M', shield: 'B', heal: '+', escort: 'A'
+    rapid: 'R', speed: 'M', shield: 'B', heal: '+', escort: 'A', torpedo: 'T'
   };
 
   function drawItems() {
@@ -3450,7 +3478,7 @@
     ctx.textBaseline = 'alphabetic';
   }
 
-  const ITEM_NAMES = { spread: '3-WAY', homing: 'HOMING', pierce: 'PIERCE', wide: 'WIDE' };
+  const ITEM_NAMES = { spread: '3-WAY', homing: 'HOMING', pierce: 'PIERCE', wide: 'WIDE', torpedo: 'TORPEDO' };
 
   function drawHud() {
     ctx.fillStyle = '#fff';
