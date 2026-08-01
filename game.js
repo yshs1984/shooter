@@ -838,22 +838,29 @@
     { school: 18, sine: 16, shooter: 16, marlin: 16, moray: 12, puffer: 12, octopus: 10 }
   ];
 
-  function pickEnemyKind() {
+  function pickEnemyKind(exclude) {
     const idx = Math.min(currentStage, STAGE_ENEMY_WEIGHTS.length) - 1;
     const table = STAGE_ENEMY_WEIGHTS[idx];
     let total = 0;
-    for (const k in table) total += table[k];
+    for (const k in table) {
+      if (exclude && exclude.includes(k)) continue;
+      total += table[k];
+    }
     let r = Math.random() * total;
     for (const k in table) {
+      if (exclude && exclude.includes(k)) continue;
       r -= table[k];
       if (r <= 0) return k;
     }
     return 'school';
   }
 
-  function spawnEnemy() {
+  // ボス戦中に出したくない敵。飛び道具が加わると難易度が跳ね上がるため
+  const BOSS_FIGHT_EXCLUDED = ['shooter'];
+
+  function spawnEnemy(exclude) {
     const y = 40 + Math.random() * (playH - 80);
-    switch (pickEnemyKind()) {
+    switch (pickEnemyKind(exclude)) {
       case 'sine':
         enemies.push({
           type: 'sine', x: W + 30, y, baseY: y, vx: -140,
@@ -1425,7 +1432,7 @@
       chargePhase: 'none',
       chargeT: 0,
       chargeY: 0,
-      returnY: 0
+      returnFrom: 0
     };
     enemies = [];
     enemyBullets = [];
@@ -1449,6 +1456,13 @@
   // サメの噛みつき突進。突進中はtrueを返し、通常の遊泳・射撃を止める
   const SHARK_CHARGE_AIM = 0.85;    // 溜めの時間
   const SHARK_CHARGE_SPEED = 900;   // 突進速度(px/s)
+  // 突進はここまでしか進まない。左端に張り付いた自機に届かない位置で止め、
+  // 画面左側を安全地帯として残す
+  const SHARK_CHARGE_SAFE_BAND = 26;   // 安全地帯の幅(px)
+
+  function sharkChargeStopX() {
+    return playerMinX() + player.hitRadius + boss.r + SHARK_CHARGE_SAFE_BAND;
+  }
 
   function updateSharkCharge(dt) {
     if (boss.chargePhase === 'none') {
@@ -1476,25 +1490,24 @@
     }
 
     if (boss.chargePhase === 'run') {
-      // 画面を左へ走り抜ける
+      // 左へ突進するが、画面左端までは行かない。
+      // 左端の手前を安全地帯として残し、逃げ場がなくならないようにする
       boss.x -= SHARK_CHARGE_SPEED * dt;
-      if (boss.x < -boss.r * 1.8) {
-        // 画面外で反転し、突進した高さと反対側から泳いで戻ってくる
+      if (boss.x <= sharkChargeStopX()) {
+        boss.x = sharkChargeStopX();
         boss.chargePhase = 'back';
         boss.chargeT = 0;
-        boss.returnY = Math.max(60, Math.min(playH - 60, playH - boss.chargeY));
-        boss.y = boss.returnY;
+        boss.returnFrom = boss.x;
       }
       return true;
     }
 
-    // back: 左外から泳いで定位置へ戻る（右向き）
+    // back: 反転して定位置へ泳いで戻る（右向き）
     boss.chargeT += dt / 1.6;
     const t = Math.min(1, boss.chargeT);
     const eased = 1 - Math.pow(1 - t, 3);
-    const from = -boss.r * 1.8;
+    const from = boss.returnFrom;
     boss.x = from + (boss.baseX - from) * eased;
-    boss.y = boss.returnY;
     if (t >= 1) {
       boss.chargePhase = 'none';
       boss.x = boss.baseX;
@@ -2058,7 +2071,7 @@
       spawnTimer -= dt;
       if (spawnTimer <= 0) {
         spawnTimer = BOSS_FIGHT_SPAWN_INTERVAL;
-        spawnEnemy();
+        spawnEnemy(BOSS_FIGHT_EXCLUDED);
       }
     }
 
