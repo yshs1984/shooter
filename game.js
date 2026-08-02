@@ -175,7 +175,11 @@
     { hazard: 'volcano',   bosses: [{ kind: 'crab',         hp: 75,  score: 650 }] },
     { hazard: 'whirlpool', bosses: [{ kind: 'mantis',       hp: 90,  score: 800 }] },
     { hazard: 'wreckage',  bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
-    { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] }
+    { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] },
+    { hazard: 'darkdive',  bosses: [
+        { kind: 'squid',       hp: 130, score: 900,  variant: 'enraged' },
+        { kind: 'goblinshark', hp: 140, score: 1200 }
+      ] }
   ];
   let currentStage = 1;
   let bossIndex = 0;   // 現在のステージ内で何体目のボスと戦っているか（連戦用）
@@ -844,6 +848,7 @@
     { school: 40, sine: 35, shooter: 25 },
     { school: 28, sine: 24, shooter: 20, marlin: 16, moray: 12 },
     { school: 20, sine: 18, shooter: 16, marlin: 16, moray: 14, puffer: 10, octopus: 6 },
+    { school: 18, sine: 16, shooter: 16, marlin: 16, moray: 12, puffer: 12, octopus: 10 },
     { school: 18, sine: 16, shooter: 16, marlin: 16, moray: 12, puffer: 12, octopus: 10 }
   ];
 
@@ -1471,6 +1476,7 @@
     const baseX = W - 140;
     boss = {
       kind: def.kind,
+      variant: def.variant || 'normal',
       x: W + 80,
       baseX,
       y: playH / 2,
@@ -1495,6 +1501,7 @@
       chargeT: 0,
       chargeY: 0,
       returnFrom: 0,
+      jawExtend: 0,   // ゴブリンシャーク専用: 突進時に顎が飛び出る演出用(0→1)
       punchCooldown: 2.2,
       punchPhase: 'none',
       punchT: 0,
@@ -1637,6 +1644,7 @@
       boss.y += (boss.chargeY - boss.y) * Math.min(1, dt * 5);
       if (t >= 1) {
         boss.chargePhase = 'run';
+        boss.jawExtend = 1;   // ゴブリンシャークは噛みつき時に顎を飛び出させる
         SFX.sharkBite();
       }
       return true;
@@ -1655,15 +1663,17 @@
       return true;
     }
 
-    // back: 反転して定位置へ泳いで戻る（右向き）
+    // back: 反転して定位置へ泳いで戻る（右向き）。顎もゆっくり引っ込める
     boss.chargeT += dt / 1.6;
     const t = Math.min(1, boss.chargeT);
     const eased = 1 - Math.pow(1 - t, 3);
     const from = boss.returnFrom;
     boss.x = from + (boss.baseX - from) * eased;
+    boss.jawExtend = Math.max(0, 1 - t * 1.4);
     if (t >= 1) {
       boss.chargePhase = 'none';
       boss.x = boss.baseX;
+      boss.jawExtend = 0;
       // 通常の上下運動へ戻る際にyが飛ばないよう、今の高さに合う位相からtを再開する
       const s = Math.max(-1, Math.min(1, (boss.y - playH / 2) / (playH * 0.28)));
       boss.t = Math.asin(s) / 0.8;
@@ -1693,8 +1703,8 @@
       return;
     }
 
-    // サメの固有攻撃: 狙いを定めてから画面を横断する噛みつき突進
-    if (boss.kind === 'shark' && updateSharkCharge(dt)) return;
+    // ゴブリンシャークの固有攻撃: 狙いを定めてから画面を横断する噛みつき突進
+    if (boss.kind === 'goblinshark' && updateSharkCharge(dt)) return;
 
     boss.y = playH / 2 + Math.sin(boss.t * 0.8) * (playH * 0.28);
 
@@ -1729,7 +1739,9 @@
         if (boss.tentacleT >= 1) {
           boss.tentacleActive = false;
           boss.tentacleT = 0;
-          boss.tentacleCooldown = 3.2 + Math.random() * 1.8;
+          // 5面の強化再戦(enraged)は触腕の間隔も詰める
+          const base = boss.variant === 'enraged' ? 1.8 : 3.2;
+          boss.tentacleCooldown = base + Math.random() * 1.8;
         }
       } else {
         boss.tentacleCooldown -= dt;
@@ -1759,9 +1771,11 @@
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
       if (boss.kind === 'squid') {
-        boss.fireCooldown = 1.1;
-        const n = 8;
-        const speed = 180;
+        // 5面の強化再戦(enraged)は弾数を増やし、間隔も詰める
+        const enraged = boss.variant === 'enraged';
+        boss.fireCooldown = enraged ? 0.8 : 1.1;
+        const n = enraged ? 12 : 8;
+        const speed = enraged ? 210 : 180;
         for (let i = 0; i < n; i++) {
           const a = (Math.PI * 2 * i) / n + boss.t;
           spawnEnemyBullet(boss.x, boss.y, Math.cos(a) * speed, Math.sin(a) * speed);
@@ -1780,8 +1794,8 @@
             { r: 7 + Math.random() * 4, kind: 'bubble' }
           );
         }
-      } else if (boss.kind === 'shark') {
-        // サメは自機を狙わず、正面（左）と斜め上下の固定3方向へ撃つ。
+      } else if (boss.kind === 'goblinshark') {
+        // ゴブリンシャークは自機を狙わず、正面（左）と斜め上下の固定3方向へ撃つ。
         // 狙い撃ちは反応し続けることを強制するが、固定角度なら位置取りで避けられる
         boss.fireCooldown = 1.6;
         const speed = 220;
@@ -2235,7 +2249,7 @@
           whirlpoolActive = true;
           whirlpoolSpawnTimer = 0;
         }
-      } else if (hazard === 'dive') {
+      } else if (hazard === 'dive' || hazard === 'darkdive') {
         updateDive(dt);
       } else if (hazard === 'wreckage') {
         if (!wreckageActive && killCount >= WRECKAGE_TRIGGER_KILLS) {
@@ -2249,7 +2263,7 @@
       updateWreckage(dt);
 
       // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
-      if (hazard === 'dive') {
+      if (hazard === 'dive' || hazard === 'darkdive') {
         if (diveMode === 'deep' && deepTimer <= 0) {
           spawnBoss();
         }
@@ -3150,6 +3164,49 @@
     drawTriangleGlareEye(-R * 0.74, -R * 0.24, R / 42, '#ff2a1a', 12 + pulse * 10);
   }
 
+  // ゴブリンシャークはサメの体をそのまま流用し、突進の噛みつき時だけ
+  // 特徴的な飛び出す顎(jawExtend)を重ねて描く
+  function drawGoblinSharkBossBody(R) {
+    drawSharkBossBody(R);
+    const j = boss.jawExtend || 0;
+    if (j <= 0) return;
+
+    ctx.save();
+    const jawColor = '#8a95a0';
+    const noseX = -R * 1.5;
+    const extend = j * R * 0.9;
+
+    // 飛び出した細長い顎
+    ctx.fillStyle = jawColor;
+    ctx.beginPath();
+    ctx.moveTo(noseX + R * 0.1, R * 0.05);
+    ctx.lineTo(noseX - extend, R * 0.14);
+    ctx.lineTo(noseX - extend, R * 0.32);
+    ctx.lineTo(noseX + R * 0.1, R * 0.5);
+    ctx.closePath();
+    ctx.fill();
+
+    // 針のような牙
+    ctx.fillStyle = '#fff';
+    const teeth = 5;
+    for (let i = 0; i < teeth; i++) {
+      const tx = noseX + R * 0.05 - (extend * (i + 0.5)) / teeth;
+      ctx.beginPath();
+      ctx.moveTo(tx, R * 0.14);
+      ctx.lineTo(tx - R * 0.05, R * 0.14 - R * 0.09 * j);
+      ctx.lineTo(tx + R * 0.05, R * 0.14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(tx, R * 0.32);
+      ctx.lineTo(tx - R * 0.05, R * 0.32 + R * 0.09 * j);
+      ctx.lineTo(tx + R * 0.05, R * 0.32);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawCrabBossBody(R) {
     const shellColor = '#8a3a2c';
     const clawColor = '#b0492f';
@@ -3370,7 +3427,8 @@
   }
 
   function drawSquidBossBody(R) {
-    const mantleColor = '#7a1f3d';
+    // 5面の強化再戦(enraged)は色を濃い赤に変え、同じボスの強化版だと伝える
+    const mantleColor = boss.variant === 'enraged' ? '#a4102f' : '#7a1f3d';
     const t = boss.t;
 
     // 触腕（波打ちながら前方＝左に伸びる）
@@ -3546,10 +3604,10 @@
     else if (boss.kind === 'squid') drawSquidBossBody(R);
     else if (boss.kind === 'mantis') drawMantisBossBody(R);
     else if (boss.kind === 'ghostoctopus') drawGhostOctopusBossBody(R);
-    else {
+    else if (boss.kind === 'goblinshark') {
       // 戻りは右向きに泳ぐので、絵も反転させる
       if (boss.chargePhase === 'back') ctx.scale(-1, 1);
-      drawSharkBossBody(R);
+      drawGoblinSharkBossBody(R);
     }
 
     ctx.restore();
@@ -4150,6 +4208,22 @@
     ctx.fillRect(0, 0, W, playH);
   }
 
+  // 5面専用: 自機の周りだけを照らすライト。全オブジェクト描画後に乗算合成で重ねることで、
+  // ライトの外側は暗く沈みつつも発光生物（shadowBlurで光る敵・弾）だけはうっすら見える
+  function drawPlayerLight() {
+    const innerR = 85;
+    const outerR = 240;
+    const grad = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, outerR);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(innerR / outerR, 'rgba(255,255,255,1)');
+    grad.addColorStop(1, 'rgba(16,20,26,1)');
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, playH);
+    ctx.restore();
+  }
+
   // 潜航中の縦穴（左右の岩壁）
   function drawCaveWalls() {
     const step = 5;
@@ -4219,11 +4293,12 @@
         const k = shakeMag * Math.min(1, shakeT / 0.2);
         ctx.translate((Math.random() - 0.5) * k * 2, (Math.random() - 0.5) * k * 2);
       }
+      const isDarkDive = STAGES[currentStage - 1].hazard === 'darkdive';
       if (diveMode === 'diving') {
-        drawDepthDarkness();
+        if (!isDarkDive) drawDepthDarkness();
         drawCaveWalls();
       } else {
-        if (diveMode === 'deep') drawDepthDarkness();
+        if (diveMode === 'deep' && !isDarkDive) drawDepthDarkness();
         drawTerrain();
       }
       if (volcanoActive) drawVolcanoes();
@@ -4240,6 +4315,8 @@
       drawParticles();
       // 墨は自機や敵の上に被せて視界を奪う（HUDより下）
       drawInk();
+      // 5面の暗闇は全オブジェクトを描いたあとにポストプロセスとして重ねる
+      if (isDarkDive && (diveMode === 'diving' || diveMode === 'deep')) drawPlayerLight();
       ctx.restore();
 
       drawHud();
