@@ -169,18 +169,20 @@
   let checkpointAtBoss = false;
 
   // ---------- 面構成 ----------
-  const STAGE_BOSSES = [
-    { kind: 'shark', hp: 60, score: 500 },
-    { kind: 'crab', hp: 75, score: 650 },
-    { kind: 'squid', hp: 95, score: 800 }
+  // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
+  // bosses: そのステージで戦うボスの並び（通常1体。連戦ステージは複数）
+  const STAGES = [
+    { hazard: 'volcano',   bosses: [{ kind: 'shark', hp: 60, score: 500 }] },
+    { hazard: 'whirlpool', bosses: [{ kind: 'crab',  hp: 75, score: 650 }] },
+    { hazard: 'dive',      bosses: [{ kind: 'squid', hp: 95, score: 800 }] }
   ];
   let currentStage = 1;
+  let bossIndex = 0;   // 現在のステージ内で何体目のボスと戦っているか（連戦用）
   let stageBannerTimer = 0;
   let stageBannerText = '';
 
   // ---------- 潜航ステージ ----------
-  // ステージ3では途中で海底が途切れて大穴になり、そこへ潜ると縦スクロールに切り替わる。
-  const DIVE_STAGE = 3;
+  // 潜航hazardのステージでは途中で海底が途切れて大穴になり、そこへ潜ると縦スクロールに切り替わる。
   const DIVE_TRIGGER_KILLS = 14;   // この撃破数で大穴が近づいてくる
   const DIVE_HOLE_WIDTH = 4000;    // 大穴の横幅（ワールド座標）
   const DIVE_SPEED = 128;          // 潜航中の縦スクロール速度(px/s)
@@ -302,8 +304,9 @@
     resetWhirlpools();
     resetDive();
     killCount = 0;
+    bossIndex = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
-    if (currentStage < STAGE_BOSSES.length) {
+    if (currentStage < STAGES.length) {
       currentStage += 1;
       stageBannerTimer = 2.2;
       stageBannerText = `STAGE ${currentStage}`;
@@ -1212,11 +1215,10 @@
     }
   }
 
-  // ---------- 渦（ステージ2で火山の代わりに出現する） ----------
+  // ---------- 渦（hazard='whirlpool'のステージで火山の代わりに出現する） ----------
   let whirlpools = [];
   let whirlpoolActive = false;        // 撃破数の条件を満たして渦が発生し始めたか
   let whirlpoolSpawnTimer = 0;
-  const WHIRLPOOL_STAGE = 2;
   const WHIRLPOOL_TRIGGER_KILLS = 14;
   const WHIRLPOOL_SPIN_SPEED = 3.6;   // 捕まっている間の回転角速度(rad/s)
   const WHIRLPOOL_SINK_SPEED = 76;    // 下へ引きずり込まれる速さ(px/s)
@@ -1405,7 +1407,7 @@
     // ここ以降に力尽きたらボス戦から再開する
     checkpointAtBoss = true;
     SFX.bossAppear();
-    const def = STAGE_BOSSES[currentStage - 1];
+    const def = STAGES[currentStage - 1].bosses[bossIndex];
     const baseX = W - 140;
     boss = {
       kind: def.kind,
@@ -1891,6 +1893,7 @@
     } else {
       // ステージの最初からやり直す
       killCount = 0;
+      bossIndex = 0;
       resetVolcanoes();
       resetWhirlpools();
       resetDive();
@@ -1907,6 +1910,7 @@
     lives = 3;
     continuesLeft = CONTINUE_MAX;
     checkpointAtBoss = false;
+    bossIndex = 0;
     totalKills = 0;
     endingT = 0;
     elapsed = 0;
@@ -2042,13 +2046,14 @@
         }
       }
 
-      // ステージごとの障害（ステージ2は渦、ステージ3は大穴＝潜航、その他は火山）
-      if (currentStage === WHIRLPOOL_STAGE) {
+      // ステージごとの障害（hazardで種類を切り替える）
+      const hazard = STAGES[currentStage - 1].hazard;
+      if (hazard === 'whirlpool') {
         if (!whirlpoolActive && killCount >= WHIRLPOOL_TRIGGER_KILLS) {
           whirlpoolActive = true;
           whirlpoolSpawnTimer = 0;
         }
-      } else if (currentStage === DIVE_STAGE) {
+      } else if (hazard === 'dive') {
         updateDive(dt);
       } else if (!volcanoActive && killCount >= VOLCANO_TRIGGER_KILLS) {
         volcanoActive = true;
@@ -2057,7 +2062,7 @@
       updateWhirlpools(dt);
 
       // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
-      if (currentStage === DIVE_STAGE) {
+      if (hazard === 'dive') {
         if (diveMode === 'deep' && deepTimer <= 0) {
           spawnBoss();
         }
@@ -2151,26 +2156,37 @@
         }
       }
       if (boss.hp <= 0) {
-        score += STAGE_BOSSES[currentStage - 1].score;
+        const stageBosses = STAGES[currentStage - 1].bosses;
+        score += stageBosses[bossIndex].score;
         spawnBurst(boss.x, boss.y, '#ffd166', 34, 320, 6);
         spawnBurst(boss.x, boss.y, '#ff6a4a', 22, 210, 5);
         shakeScreen(9, 0.5);
         boss = null;
         SFX.bossDown();
-        // ボスを倒したので、次に力尽きたときはステージ最初からに戻す
-        checkpointAtBoss = false;
-        if (currentStage < STAGE_BOSSES.length) {
-          currentStage += 1;
-          killCount = 0;
-          resetVolcanoes();
-          resetWhirlpools();
-          resetDive();
-          spawnTimer = Math.max(spawnTimer, 1.2);
+        if (bossIndex + 1 < stageBosses.length) {
+          // 同じステージ内に次のボスが控えている（連戦）。
+          // checkpointAtBossはtrueのまま維持し、コンティニュー時は連戦の1体目から再開する
+          bossIndex += 1;
           stageBannerTimer = 2.2;
-          stageBannerText = `STAGE ${currentStage}`;
+          stageBannerText = 'NEXT BOSS';
           SFX.stage();
         } else {
-          startEnding();
+          // ボスを倒したので、次に力尽きたときはステージ最初からに戻す
+          checkpointAtBoss = false;
+          bossIndex = 0;
+          if (currentStage < STAGES.length) {
+            currentStage += 1;
+            killCount = 0;
+            resetVolcanoes();
+            resetWhirlpools();
+            resetDive();
+            spawnTimer = Math.max(spawnTimer, 1.2);
+            stageBannerTimer = 2.2;
+            stageBannerText = `STAGE ${currentStage}`;
+            SFX.stage();
+          } else {
+            startEnding();
+          }
         }
       }
     }
@@ -3519,7 +3535,7 @@
     }
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = '13px sans-serif';
-    ctx.fillText(`STAGE ${currentStage}/${STAGE_BOSSES.length}`, 12, 56);
+    ctx.fillText(`STAGE ${currentStage}/${STAGES.length}`, 12, 56);
     if (diveMode === 'diving' || diveMode === 'deep') {
       ctx.fillStyle = '#9fe6ff';
       ctx.fillText(`DEPTH ${Math.floor(diveDepth)}m`, 90, 56);
