@@ -3369,20 +3369,28 @@
     const tentColor = 'rgba(190,210,220,0.6)';
     const suckerColor = 'rgba(230,245,250,0.55)';
 
-    // 垂れ下がる触腕（8本）。タコらしくうねらせながらカールさせ、吸盤を並べる
+    // 触腕（8本）。クラゲのように並んで垂れるのではなく、胴体下の一点から
+    // 放射状に扇状へ広がらせ、うねらせてタコらしいシルエットにする
     ctx.lineCap = 'round';
     const tentacleCount = 8;
+    const originY = R * 0.35;   // マントがくびれる付け根
     for (let i = 0; i < tentacleCount; i++) {
       const norm = (i - (tentacleCount - 1) / 2) / ((tentacleCount - 1) / 2); // -1..1
-      const baseX = norm * R * 0.8;
-      const sway = Math.sin(t * 1.5 + i * 0.9) * R * 0.2;
-      const curl = Math.sin(t * 1.1 + i * 1.3) * R * 0.3;
-      const sx = baseX, sy = R * 0.5;
-      const mx = baseX + sway, my = R * 1.15;
-      const ex = baseX + sway * 0.5 + curl, ey = R * 1.85 + Math.cos(t * 0.9 + i) * R * 0.08;
+      const baseAngle = Math.PI / 2 + norm * 1.25;   // 下向きを中心に扇状(約143度)へ広げる
+      const sway = Math.sin(t * 1.4 + i * 0.9) * 0.18;
+      const angle = baseAngle + sway;
+      const len = R * (1.5 + 0.15 * Math.sin(i * 2.1));
+      const curl = Math.sin(t * 1.1 + i * 1.3) * R * 0.35;
+
+      const sx = Math.cos(baseAngle) * R * 0.15, sy = originY + Math.sin(baseAngle) * R * 0.15;
+      const mx = Math.cos(angle) * len * 0.55, my = originY + Math.sin(angle) * len * 0.55;
+      // 先端は曲げの方向へさらにカールさせ、まっすぐ伸びきらないようにする
+      const perpX = -Math.sin(angle), perpY = Math.cos(angle);
+      const ex = Math.cos(angle) * len + perpX * curl;
+      const ey = originY + Math.sin(angle) * len + perpY * curl;
 
       ctx.strokeStyle = tentColor;
-      ctx.lineWidth = Math.max(2.5, R * 0.11 * (1 - Math.abs(norm) * 0.3));
+      ctx.lineWidth = Math.max(2.5, R * 0.13 * (1 - Math.abs(norm) * 0.25));
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.quadraticCurveTo(mx, my, ex, ey);
@@ -3400,31 +3408,29 @@
       }
     }
 
-    // マント（タコらしいドーム状の頭部＋幽霊らしく波打つ裾）
+    // マント（丸くふくらんだ袋状の頭部が、くびれた付け根で触腕の束に繋がる）
+    const mantlePath = () => {
+      ctx.beginPath();
+      ctx.moveTo(0, originY);
+      ctx.bezierCurveTo(-R * 0.95, R * 0.3, -R * 1.05, -R * 0.55, -R * 0.35, -R * 0.95);
+      ctx.quadraticCurveTo(0, -R * 1.15, R * 0.35, -R * 0.95);
+      ctx.bezierCurveTo(R * 1.05, -R * 0.55, R * 0.95, R * 0.3, 0, originY);
+      ctx.closePath();
+    };
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = bodyColor;
-    ctx.beginPath();
-    ctx.moveTo(-R * 0.95, R * 0.15);
-    ctx.quadraticCurveTo(-R * 1.05, -R * 0.75, 0, -R * 1.0);
-    ctx.quadraticCurveTo(R * 1.05, -R * 0.75, R * 0.95, R * 0.15);
-    const hemSteps = 16;
-    for (let s = 1; s <= hemSteps; s++) {
-      const u = s / hemSteps;
-      const hx = R * 0.95 - u * R * 1.9;
-      const hy = R * 0.15 + Math.sin(u * Math.PI * 3 + t * 1.4) * R * 0.08;
-      ctx.lineTo(hx, hy);
-    }
-    ctx.closePath();
+    mantlePath();
     ctx.fill();
     ctx.restore();
+    // 幽霊らしいゆらめきを、輪郭のぼかしで軽く添える程度に留める
+    const flicker = 0.5 + 0.5 * Math.sin(t * 1.8);
     ctx.strokeStyle = outlineColor;
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-R * 0.95, R * 0.15);
-    ctx.quadraticCurveTo(-R * 1.05, -R * 0.75, 0, -R * 1.0);
-    ctx.quadraticCurveTo(R * 1.05, -R * 0.75, R * 0.95, R * 0.15);
+    ctx.globalAlpha = 0.6 + flicker * 0.4;
+    mantlePath();
     ctx.stroke();
+    ctx.globalAlpha = 1;
 
     // 大きな青白い目
     const pulse = 0.5 + 0.5 * Math.sin(t * 2.4);
