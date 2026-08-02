@@ -172,9 +172,10 @@
   // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
   // bosses: そのステージで戦うボスの並び（通常1体。連戦ステージは複数）
   const STAGES = [
-    { hazard: 'volcano',   bosses: [{ kind: 'crab',   hp: 75, score: 650 }] },
-    { hazard: 'whirlpool', bosses: [{ kind: 'mantis', hp: 90, score: 800 }] },
-    { hazard: 'dive',      bosses: [{ kind: 'squid',  hp: 95, score: 800 }] }
+    { hazard: 'volcano',   bosses: [{ kind: 'crab',         hp: 75,  score: 650 }] },
+    { hazard: 'whirlpool', bosses: [{ kind: 'mantis',       hp: 90,  score: 800 }] },
+    { hazard: 'wreckage',  bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
+    { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] }
   ];
   let currentStage = 1;
   let bossIndex = 0;   // 現在のステージ内で何体目のボスと戦っているか（連戦用）
@@ -303,6 +304,7 @@
     resetVolcanoes();
     resetWhirlpools();
     resetDive();
+    resetWreckage();
     killCount = 0;
     bossIndex = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
@@ -579,7 +581,10 @@
       halfWidth: 140 + r3 * 110,
       peakH: playH * 0.18 + r1 * (playH * 0.22), // 控えめ〜プレイエリアの4割程度
       // 山のうち一部は火山。地形と一緒に流れてくるので固定配置にならない
-      isVolcano: terrainHash(periodIndex + 300) < VOLCANO_MOUNTAIN_CHANCE
+      isVolcano: terrainHash(periodIndex + 300) < VOLCANO_MOUNTAIN_CHANCE,
+      // 山のうち一部は沈没船の残骸。isVolcanoとは独立の判定なので、
+      // どちらを見るかはステージのhazardが決める
+      isWreckage: terrainHash(periodIndex + 400) < WRECKAGE_MOUNTAIN_CHANCE
     };
   }
 
@@ -838,6 +843,7 @@
   const STAGE_ENEMY_WEIGHTS = [
     { school: 40, sine: 35, shooter: 25 },
     { school: 28, sine: 24, shooter: 20, marlin: 16, moray: 12 },
+    { school: 20, sine: 18, shooter: 16, marlin: 16, moray: 14, puffer: 10, octopus: 6 },
     { school: 18, sine: 16, shooter: 16, marlin: 16, moray: 12, puffer: 12, octopus: 10 }
   ];
 
@@ -1215,6 +1221,60 @@
     }
   }
 
+  // ---------- 沈没船の残骸帯 ----------
+  // 海底の山の一部が船体の残骸になっており、火山と同じく地形と一緒に流れてくる。
+  // 主な危険は「隙間を縫って進む」地形の通行難度そのもの。まれに崩落デブリが剥がれ落ちる
+  const WRECKAGE_TRIGGER_KILLS = 14;
+  const WRECKAGE_MOUNTAIN_CHANCE = 0.85;  // 山のうち残骸になる割合（頻出させて隙間を縫わせる）
+  let wreckageActive = false;
+  let wreckageTimers = new Map();         // periodIndex -> 次のデブリ剥離までの秒数
+
+  function resetWreckage() {
+    wreckageActive = false;
+    wreckageTimers.clear();
+  }
+
+  // 画面に写っている残骸を列挙する
+  function visibleWreckage() {
+    const list = [];
+    const first = Math.floor(terrainOffset / TERRAIN_PERIOD) - 1;
+    const last = Math.floor((terrainOffset + W) / TERRAIN_PERIOD) + 1;
+    for (let i = first; i <= last; i++) {
+      const m = mountainAt(i);
+      if (!m || !m.isWreckage) continue;
+      const screenX = m.center - terrainOffset;
+      if (screenX < -60 || screenX > W + 60) continue;
+      list.push({ periodIndex: i, x: screenX, y: terrainSurfaceY(screenX) });
+    }
+    return list;
+  }
+
+  function updateWreckage(dt) {
+    if (!wreckageActive) return;
+    const onScreen = new Set();
+    for (const w of visibleWreckage()) {
+      onScreen.add(w.periodIndex);
+      let t = wreckageTimers.get(w.periodIndex);
+      if (t === undefined) t = 1.0 + Math.random() * 1.5;
+      t -= dt;
+      if (t <= 0) {
+        t = 2.2 + Math.random() * 1.8;
+        // 船体からデブリが剥がれ落ち、ゆっくり漂う（軽量な危険源）
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.5;
+        const speed = 60 + Math.random() * 60;
+        spawnEnemyBullet(
+          w.x, w.y - 12,
+          Math.cos(angle) * speed, Math.sin(angle) * speed,
+          { r: 6 + Math.random() * 4, kind: 'debris' }
+        );
+      }
+      wreckageTimers.set(w.periodIndex, t);
+    }
+    for (const key of wreckageTimers.keys()) {
+      if (!onScreen.has(key)) wreckageTimers.delete(key);
+    }
+  }
+
   // ---------- 渦（hazard='whirlpool'のステージで火山の代わりに出現する） ----------
   let whirlpools = [];
   let whirlpoolActive = false;        // 撃破数の条件を満たして渦が発生し始めたか
@@ -1437,7 +1497,12 @@
       returnFrom: 0,
       punchCooldown: 2.2,
       punchPhase: 'none',
-      punchT: 0
+      punchT: 0,
+      slamCooldown: 2.6,
+      slamPhase: 'none',
+      slamT: 0,
+      slamXs: [],
+      ghostInkCooldown: 2.0
     };
     enemies = [];
     enemyBullets = [];
@@ -1498,6 +1563,45 @@
         boss.punchPhase = 'none';
         boss.punchT = 0;
         boss.punchCooldown = 3.4 + Math.random() * 1.8;
+      }
+    }
+  }
+
+  // 幽霊船の主（巨大タコ）の触腕叩きつけ: 複数本を画面下から同時に突き上げる。
+  // イカの単発追尾とは違い、叩きつけどころは事前に決め打ちして予告する
+  const GHOST_SLAM_TELEGRAPH = 0.6;
+  const GHOST_SLAM_COUNT = 2;
+  const GHOST_SLAM_SEGMENTS = 5;   // 1本のタコ足を表す弾の数
+
+  function updateGhostOctopusSlam(dt) {
+    if (boss.slamPhase === 'none') {
+      boss.slamCooldown -= dt;
+      if (boss.slamCooldown <= 0) {
+        boss.slamPhase = 'telegraph';
+        boss.slamT = 0;
+        boss.slamXs = [];
+        for (let i = 0; i < GHOST_SLAM_COUNT; i++) {
+          boss.slamXs.push(30 + Math.random() * (W - 60));
+        }
+      }
+      return;
+    }
+    if (boss.slamPhase === 'telegraph') {
+      boss.slamT += dt / GHOST_SLAM_TELEGRAPH;
+      if (boss.slamT >= 1) {
+        boss.slamPhase = 'none';
+        boss.slamT = 0;
+        boss.slamCooldown = 3.6 + Math.random() * 2.0;
+        SFX.sharkBite();   // 突き上げの衝撃音を流用
+        for (const sx of boss.slamXs) {
+          for (let i = 0; i < GHOST_SLAM_SEGMENTS; i++) {
+            spawnEnemyBullet(
+              sx, playH + 20 + i * 22,
+              0, -420,
+              { r: 9, kind: 'tentacleslam' }
+            );
+          }
+        }
       }
     }
   }
@@ -1642,6 +1746,16 @@
     // シャコの固有攻撃: 溜めてから正面へ衝撃波（シャコパンチ）
     if (boss.kind === 'mantis') updateMantisPunch(dt);
 
+    // 幽霊船の主の固有攻撃: 触腕叩きつけ＋墨
+    if (boss.kind === 'ghostoctopus') {
+      updateGhostOctopusSlam(dt);
+      boss.ghostInkCooldown -= dt;
+      if (boss.ghostInkCooldown <= 0) {
+        boss.ghostInkCooldown = 3.5 + Math.random() * 1.5;
+        spawnInk(boss.x - boss.r, boss.y);
+      }
+    }
+
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
       if (boss.kind === 'squid') {
@@ -1683,6 +1797,14 @@
         const dy = player.y - boss.y;
         const len = Math.max(1, Math.hypot(dx, dy));
         spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed);
+      } else if (boss.kind === 'ghostoctopus') {
+        // 触腕叩きつけ＋墨が主な脅威なので、通常弾も狙い撃ちの単発だけに抑える
+        boss.fireCooldown = 1.8;
+        const speed = 190;
+        const dx = player.x - boss.x;
+        const dy = player.y - boss.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed, { r: 6 });
       } else {
         boss.fireCooldown = 0.9;
         const speed = 220;
@@ -1955,6 +2077,7 @@
       resetVolcanoes();
       resetWhirlpools();
       resetDive();
+      resetWreckage();
       stageBannerTimer = 2.2;
       stageBannerText = `STAGE ${currentStage}`;
     }
@@ -1987,6 +2110,7 @@
     resetVolcanoes();
     resetWhirlpools();
     resetDive();
+    resetWreckage();
     spawnTimer = 0;
     terrainOffset = 0;
     currentStage = 1;
@@ -2113,11 +2237,16 @@
         }
       } else if (hazard === 'dive') {
         updateDive(dt);
+      } else if (hazard === 'wreckage') {
+        if (!wreckageActive && killCount >= WRECKAGE_TRIGGER_KILLS) {
+          wreckageActive = true;
+        }
       } else if (!volcanoActive && killCount >= VOLCANO_TRIGGER_KILLS) {
         volcanoActive = true;
       }
       updateVolcanoes(dt);
       updateWhirlpools(dt);
+      updateWreckage(dt);
 
       // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
       if (hazard === 'dive') {
@@ -2238,6 +2367,7 @@
             resetVolcanoes();
             resetWhirlpools();
             resetDive();
+            resetWreckage();
             spawnTimer = Math.max(spawnTimer, 1.2);
             stageBannerTimer = 2.2;
             stageBannerText = `STAGE ${currentStage}`;
@@ -3175,6 +3305,70 @@
     }
   }
 
+  function drawGhostOctopusBossBody(R) {
+    const t = boss.t;
+    const bodyColor = 'rgba(190,210,220,0.55)';   // 幽霊のように半透明
+    const outlineColor = 'rgba(230,245,250,0.7)';
+
+    // 垂れ下がる触腕（8本、揺らめかせる）
+    ctx.strokeStyle = bodyColor;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(3, R * 0.1);
+    for (let i = -3; i <= 4; i++) {
+      const baseX = i * R * 0.22;
+      const sway = Math.sin(t * 1.6 + i) * R * 0.22;
+      ctx.beginPath();
+      ctx.moveTo(baseX, R * 0.55);
+      ctx.quadraticCurveTo(baseX + sway * 0.6, R * 1.25, baseX + sway, R * 1.9);
+      ctx.stroke();
+    }
+
+    // 丸くふくらんだ頭
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R * 1.05, R * 0.95, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = outlineColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R * 1.05, R * 0.95, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 大きな青白い目
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.4);
+    for (const ex of [-R * 0.32, R * 0.1]) {
+      ctx.save();
+      ctx.shadowColor = '#bfe8ff';
+      ctx.shadowBlur = 6 + pulse * 10;
+      ctx.fillStyle = `rgba(200,240,255,${0.7 + pulse * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(ex, -R * 0.1, R * 0.17, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0a1620';
+      ctx.beginPath();
+      ctx.arc(ex, -R * 0.1, R * 0.07, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 叩きつけの予告中は不気味な明滅で緊張を出す
+    if (boss.slamPhase === 'telegraph') {
+      const glow = 0.4 + 0.6 * boss.slamT;
+      ctx.save();
+      ctx.shadowColor = '#7fffe0';
+      ctx.shadowBlur = 10 + glow * 16;
+      ctx.strokeStyle = `rgba(127,255,224,${glow})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   function drawSquidBossBody(R) {
     const mantleColor = '#7a1f3d';
     const t = boss.t;
@@ -3327,6 +3521,20 @@
     }
   }
 
+  // 触腕叩きつけの予告。海底から立ち上る影で、突き上げてくる位置を示す
+  function drawGhostSlamTelegraph() {
+    const k = boss.slamT;
+    for (const sx of boss.slamXs) {
+      ctx.save();
+      ctx.globalAlpha = 0.3 + k * 0.4;
+      ctx.fillStyle = 'rgba(127,255,224,0.4)';
+      ctx.beginPath();
+      ctx.ellipse(sx, playH - 6, 22 + k * 10, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawBoss() {
     if (!boss) return;
     const R = boss.r;
@@ -3337,6 +3545,7 @@
     if (boss.kind === 'crab') drawCrabBossBody(R);
     else if (boss.kind === 'squid') drawSquidBossBody(R);
     else if (boss.kind === 'mantis') drawMantisBossBody(R);
+    else if (boss.kind === 'ghostoctopus') drawGhostOctopusBossBody(R);
     else {
       // 戻りは右向きに泳ぐので、絵も反転させる
       if (boss.chargePhase === 'back') ctx.scale(-1, 1);
@@ -3344,6 +3553,7 @@
     }
 
     ctx.restore();
+    if (boss.kind === 'ghostoctopus' && boss.slamPhase === 'telegraph') drawGhostSlamTelegraph();
     drawHitFlash(boss);
 
     const barW = Math.min(220, W - 140);
@@ -3453,6 +3663,32 @@
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.restore();
+      } else if (b.kind === 'debris') {
+        // 残骸から剥がれ落ちたデブリ。錆びた鉄片
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.x * 0.05 + b.y * 0.03);
+        ctx.fillStyle = '#7a5a44';
+        ctx.beginPath();
+        ctx.moveTo(-b.r, -b.r * 0.6);
+        ctx.lineTo(b.r * 0.8, -b.r * 0.3);
+        ctx.lineTo(b.r * 0.6, b.r);
+        ctx.lineTo(-b.r * 0.7, b.r * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else if (b.kind === 'tentacleslam') {
+        // 触腕叩きつけの一節。半透明の吸盤付き
+        ctx.save();
+        ctx.fillStyle = 'rgba(190,210,220,0.6)';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(120,150,160,0.5)';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       } else {
         ctx.fillStyle = '#ff5c5c';
         ctx.beginPath();
@@ -3558,6 +3794,85 @@
       ctx.beginPath();
       ctx.ellipse(0, 0, 8, 4, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // 沈没船の残骸帯の見た目。山の斜面に沿って割れた船体・錆・舷窓を重ねる
+  function drawWreckage() {
+    for (const w of visibleWreckage()) {
+      ctx.save();
+      ctx.translate(w.x, w.y);
+
+      // 錆の筋（火山の溶岩の筋と同じ考え方で斜面に沿わせる）
+      ctx.strokeStyle = 'rgba(150,110,70,0.55)';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      for (const dir of [-1, 1]) {
+        ctx.beginPath();
+        for (let s = 0; s <= 10; s++) {
+          const dx = dir * s * 9;
+          const dy = terrainSurfaceY(w.x + dx) - w.y + 5;
+          if (s === 0) ctx.moveTo(dx, dy);
+          else ctx.lineTo(dx, dy);
+        }
+        ctx.stroke();
+      }
+
+      // 山頂に突き刺さった船体の断片（大きく傾いた鉄板）
+      ctx.save();
+      ctx.rotate(-0.18);
+      const hullColor = '#4a4038';
+      ctx.fillStyle = hullColor;
+      ctx.beginPath();
+      ctx.moveTo(-58, 6);
+      ctx.lineTo(-40, -46);
+      ctx.lineTo(30, -58);
+      ctx.lineTo(56, -30);
+      ctx.lineTo(44, 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(20,16,14,0.6)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // リベット打ちの継ぎ目
+      ctx.strokeStyle = 'rgba(150,110,70,0.6)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-40, -46);
+      ctx.lineTo(-10, -20);
+      ctx.lineTo(30, -58);
+      ctx.moveTo(-10, -20);
+      ctx.lineTo(44, 4);
+      ctx.stroke();
+
+      // 割れた舷窓3つ（ぼんやり発光）
+      const glow = 0.4 + 0.3 * Math.sin(Date.now() / 400 + w.periodIndex);
+      for (const [px, py] of [[-24, -18], [4, -36], [26, -14]]) {
+        ctx.fillStyle = `rgba(150,215,230,${glow})`;
+        ctx.beginPath();
+        ctx.arc(px, py, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(15,12,10,0.85)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // 折れて突き出た鉄骨・手すり
+      ctx.strokeStyle = 'rgba(60,52,48,0.9)';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      for (const dir of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(dir * 44, -12);
+        ctx.lineTo(dir * 70, -40);
+        ctx.moveTo(dir * 50, -2);
+        ctx.lineTo(dir * 78, -6);
+        ctx.stroke();
+      }
+
       ctx.restore();
     }
   }
@@ -3912,6 +4227,7 @@
         drawTerrain();
       }
       if (volcanoActive) drawVolcanoes();
+      if (wreckageActive) drawWreckage();
       for (const wp of whirlpools) drawWhirlpool(wp);
       drawEnemies();
       drawItems();
