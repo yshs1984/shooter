@@ -172,8 +172,8 @@
   // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
   // bosses: そのステージで戦うボスの並び（通常1体。連戦ステージは複数）
   const STAGES = [
-    { hazard: 'volcano',   bosses: [{ kind: 'crab',         hp: 75,  score: 650 }] },
-    { hazard: 'whirlpool', bosses: [{ kind: 'mantis',       hp: 90,  score: 800 }] },
+    { hazard: 'volcano',   bosses: [{ kind: 'mantis',       hp: 75,  score: 650 }] },
+    { hazard: 'whirlpool', bosses: [{ kind: 'crab',         hp: 90,  score: 800 }] },
     { hazard: 'wreckage',  bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
     { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] },
     { hazard: 'darkdive',  bosses: [
