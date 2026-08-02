@@ -3366,32 +3366,64 @@
     const t = boss.t;
     const bodyColor = 'rgba(190,210,220,0.55)';   // 幽霊のように半透明
     const outlineColor = 'rgba(230,245,250,0.7)';
+    const tentColor = 'rgba(190,210,220,0.6)';
+    const suckerColor = 'rgba(230,245,250,0.55)';
 
-    // 垂れ下がる触腕（8本、揺らめかせる）
-    ctx.strokeStyle = bodyColor;
+    // 垂れ下がる触腕（8本）。タコらしくうねらせながらカールさせ、吸盤を並べる
     ctx.lineCap = 'round';
-    ctx.lineWidth = Math.max(3, R * 0.1);
-    for (let i = -3; i <= 4; i++) {
-      const baseX = i * R * 0.22;
-      const sway = Math.sin(t * 1.6 + i) * R * 0.22;
+    const tentacleCount = 8;
+    for (let i = 0; i < tentacleCount; i++) {
+      const norm = (i - (tentacleCount - 1) / 2) / ((tentacleCount - 1) / 2); // -1..1
+      const baseX = norm * R * 0.8;
+      const sway = Math.sin(t * 1.5 + i * 0.9) * R * 0.2;
+      const curl = Math.sin(t * 1.1 + i * 1.3) * R * 0.3;
+      const sx = baseX, sy = R * 0.5;
+      const mx = baseX + sway, my = R * 1.15;
+      const ex = baseX + sway * 0.5 + curl, ey = R * 1.85 + Math.cos(t * 0.9 + i) * R * 0.08;
+
+      ctx.strokeStyle = tentColor;
+      ctx.lineWidth = Math.max(2.5, R * 0.11 * (1 - Math.abs(norm) * 0.3));
       ctx.beginPath();
-      ctx.moveTo(baseX, R * 0.55);
-      ctx.quadraticCurveTo(baseX + sway * 0.6, R * 1.25, baseX + sway, R * 1.9);
+      ctx.moveTo(sx, sy);
+      ctx.quadraticCurveTo(mx, my, ex, ey);
       ctx.stroke();
+
+      // 吸盤（触腕の曲線に沿って小さな丸を並べる）
+      ctx.fillStyle = suckerColor;
+      for (let s = 1; s <= 3; s++) {
+        const u = s / 4;
+        const px = (1 - u) * (1 - u) * sx + 2 * (1 - u) * u * mx + u * u * ex;
+        const py = (1 - u) * (1 - u) * sy + 2 * (1 - u) * u * my + u * u * ey;
+        ctx.beginPath();
+        ctx.arc(px, py, R * 0.045 * (1 - u * 0.4), 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
-    // 丸くふくらんだ頭
+    // マント（タコらしいドーム状の頭部＋幽霊らしく波打つ裾）
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = bodyColor;
     ctx.beginPath();
-    ctx.ellipse(0, 0, R * 1.05, R * 0.95, 0, 0, Math.PI * 2);
+    ctx.moveTo(-R * 0.95, R * 0.15);
+    ctx.quadraticCurveTo(-R * 1.05, -R * 0.75, 0, -R * 1.0);
+    ctx.quadraticCurveTo(R * 1.05, -R * 0.75, R * 0.95, R * 0.15);
+    const hemSteps = 16;
+    for (let s = 1; s <= hemSteps; s++) {
+      const u = s / hemSteps;
+      const hx = R * 0.95 - u * R * 1.9;
+      const hy = R * 0.15 + Math.sin(u * Math.PI * 3 + t * 1.4) * R * 0.08;
+      ctx.lineTo(hx, hy);
+    }
+    ctx.closePath();
     ctx.fill();
     ctx.restore();
     ctx.strokeStyle = outlineColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(0, 0, R * 1.05, R * 0.95, 0, 0, Math.PI * 2);
+    ctx.moveTo(-R * 0.95, R * 0.15);
+    ctx.quadraticCurveTo(-R * 1.05, -R * 0.75, 0, -R * 1.0);
+    ctx.quadraticCurveTo(R * 1.05, -R * 0.75, R * 0.95, R * 0.15);
     ctx.stroke();
 
     // 大きな青白い目
@@ -3402,11 +3434,11 @@
       ctx.shadowBlur = 6 + pulse * 10;
       ctx.fillStyle = `rgba(200,240,255,${0.7 + pulse * 0.3})`;
       ctx.beginPath();
-      ctx.arc(ex, -R * 0.1, R * 0.17, 0, Math.PI * 2);
+      ctx.arc(ex, -R * 0.35, R * 0.17, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#0a1620';
       ctx.beginPath();
-      ctx.arc(ex, -R * 0.1, R * 0.07, 0, Math.PI * 2);
+      ctx.arc(ex, -R * 0.35, R * 0.07, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -3420,7 +3452,7 @@
       ctx.strokeStyle = `rgba(127,255,224,${glow})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(0, 0, R * 1.3, 0, Math.PI * 2);
+      ctx.arc(0, -R * 0.3, R * 1.3, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -3856,7 +3888,151 @@
     }
   }
 
-  // 沈没船の残骸帯の見た目。山の斜面に沿って割れた船体・錆・舷窓を重ねる
+  // 山頂に突き刺さった船体の断片（大きく傾いた鉄板・舷窓）
+  function drawWreckageHullPlate(phase) {
+    ctx.save();
+    ctx.rotate(-0.18);
+    const hullColor = '#4a4038';
+    ctx.fillStyle = hullColor;
+    ctx.beginPath();
+    ctx.moveTo(-58, 6);
+    ctx.lineTo(-40, -46);
+    ctx.lineTo(30, -58);
+    ctx.lineTo(56, -30);
+    ctx.lineTo(44, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20,16,14,0.6)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // リベット打ちの継ぎ目
+    ctx.strokeStyle = 'rgba(150,110,70,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-40, -46);
+    ctx.lineTo(-10, -20);
+    ctx.lineTo(30, -58);
+    ctx.moveTo(-10, -20);
+    ctx.lineTo(44, 4);
+    ctx.stroke();
+
+    // 割れた舷窓3つ（ぼんやり発光）
+    const glow = 0.4 + 0.3 * Math.sin(Date.now() / 400 + phase);
+    for (const [px, py] of [[-24, -18], [4, -36], [26, -14]]) {
+      ctx.fillStyle = `rgba(150,215,230,${glow})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(15,12,10,0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 折れて突き出た鉄骨・手すり
+    ctx.strokeStyle = 'rgba(60,52,48,0.9)';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(dir * 44, -12);
+      ctx.lineTo(dir * 70, -40);
+      ctx.moveTo(dir * 50, -2);
+      ctx.lineTo(dir * 78, -6);
+      ctx.stroke();
+    }
+  }
+
+  // 折れたマストとちぎれた帆（水中でゆっくりはためく）
+  function drawWreckageMast(phase) {
+    ctx.save();
+    ctx.rotate(-0.12);
+
+    // マスト本体
+    ctx.strokeStyle = '#3a3128';
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, 10);
+    ctx.lineTo(-8, -78);
+    ctx.stroke();
+
+    // 支索（リギング）
+    ctx.strokeStyle = 'rgba(120,100,80,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-8, -78);
+    ctx.lineTo(38, 0);
+    ctx.moveTo(-8, -50);
+    ctx.lineTo(-46, 4);
+    ctx.stroke();
+
+    // ちぎれてはためく帆布
+    const flutter = Math.sin(Date.now() / 700 + phase) * 8;
+    ctx.fillStyle = 'rgba(200,195,180,0.45)';
+    ctx.beginPath();
+    ctx.moveTo(-8, -74);
+    ctx.quadraticCurveTo(20 + flutter, -60, 30 + flutter * 1.4, -34);
+    ctx.quadraticCurveTo(14, -44, -6, -36);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20,16,14,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // むき出しの肋材（船の骨組み）と錨
+  function drawWreckageRibs(phase) {
+    ctx.save();
+
+    // 扇状に並んだ肋材
+    ctx.strokeStyle = 'rgba(70,58,50,0.85)';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      const a = -Math.PI / 2 + (i - 1.5) * 0.32;
+      const x1 = Math.cos(a) * 12, y1 = Math.sin(a) * 12 + 4;
+      const x2 = Math.cos(a) * 58, y2 = Math.sin(a) * 58 - 4;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.quadraticCurveTo(x1 + (x2 - x1) * 0.5, y1 - 14, x2, y2);
+      ctx.stroke();
+    }
+    // 竜骨
+    ctx.strokeStyle = 'rgba(50,42,36,0.9)';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(-40, 2);
+    ctx.lineTo(40, 2);
+    ctx.stroke();
+
+    // 錨
+    ctx.save();
+    ctx.translate(50, -20);
+    ctx.rotate(0.3);
+    ctx.strokeStyle = 'rgba(90,80,70,0.8)';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.moveTo(0, 5);
+    ctx.lineTo(0, 26);
+    ctx.moveTo(-12, 26);
+    ctx.quadraticCurveTo(0, 38, 12, 26);
+    ctx.moveTo(-10, -10);
+    ctx.lineTo(10, -10);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  const WRECKAGE_VARIANT_DRAWERS = [drawWreckageHullPlate, drawWreckageMast, drawWreckageRibs];
+
+  // 沈没船の残骸帯の見た目。山の斜面に沿って錆の筋を重ね、残骸の形は場所ごとに変える
   function drawWreckage() {
     for (const w of visibleWreckage()) {
       ctx.save();
@@ -3877,59 +4053,9 @@
         ctx.stroke();
       }
 
-      // 山頂に突き刺さった船体の断片（大きく傾いた鉄板）
-      ctx.save();
-      ctx.rotate(-0.18);
-      const hullColor = '#4a4038';
-      ctx.fillStyle = hullColor;
-      ctx.beginPath();
-      ctx.moveTo(-58, 6);
-      ctx.lineTo(-40, -46);
-      ctx.lineTo(30, -58);
-      ctx.lineTo(56, -30);
-      ctx.lineTo(44, 4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(20,16,14,0.6)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // リベット打ちの継ぎ目
-      ctx.strokeStyle = 'rgba(150,110,70,0.6)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-40, -46);
-      ctx.lineTo(-10, -20);
-      ctx.lineTo(30, -58);
-      ctx.moveTo(-10, -20);
-      ctx.lineTo(44, 4);
-      ctx.stroke();
-
-      // 割れた舷窓3つ（ぼんやり発光）
-      const glow = 0.4 + 0.3 * Math.sin(Date.now() / 400 + w.periodIndex);
-      for (const [px, py] of [[-24, -18], [4, -36], [26, -14]]) {
-        ctx.fillStyle = `rgba(150,215,230,${glow})`;
-        ctx.beginPath();
-        ctx.arc(px, py, 7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(15,12,10,0.85)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      // 折れて突き出た鉄骨・手すり
-      ctx.strokeStyle = 'rgba(60,52,48,0.9)';
-      ctx.lineWidth = 4;
-      ctx.lineCap = 'round';
-      for (const dir of [-1, 1]) {
-        ctx.beginPath();
-        ctx.moveTo(dir * 44, -12);
-        ctx.lineTo(dir * 70, -40);
-        ctx.moveTo(dir * 50, -2);
-        ctx.lineTo(dir * 78, -6);
-        ctx.stroke();
-      }
+      // 残骸の形は場所ごとに決定的に変える（船体片・マスト・肋材の3種）
+      const variant = Math.floor(terrainHash(w.periodIndex + 500) * WRECKAGE_VARIANT_DRAWERS.length);
+      WRECKAGE_VARIANT_DRAWERS[variant](w.periodIndex);
 
       ctx.restore();
     }
