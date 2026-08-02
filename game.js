@@ -172,9 +172,9 @@
   // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
   // bosses: そのステージで戦うボスの並び（通常1体。連戦ステージは複数）
   const STAGES = [
-    { hazard: 'volcano',   bosses: [{ kind: 'shark', hp: 60, score: 500 }] },
-    { hazard: 'whirlpool', bosses: [{ kind: 'crab',  hp: 75, score: 650 }] },
-    { hazard: 'dive',      bosses: [{ kind: 'squid', hp: 95, score: 800 }] }
+    { hazard: 'volcano',   bosses: [{ kind: 'crab',   hp: 75, score: 650 }] },
+    { hazard: 'whirlpool', bosses: [{ kind: 'mantis', hp: 90, score: 800 }] },
+    { hazard: 'dive',      bosses: [{ kind: 'squid',  hp: 95, score: 800 }] }
   ];
   let currentStage = 1;
   let bossIndex = 0;   // 現在のステージ内で何体目のボスと戦っているか（連戦用）
@@ -1434,7 +1434,10 @@
       chargePhase: 'none',
       chargeT: 0,
       chargeY: 0,
-      returnFrom: 0
+      returnFrom: 0,
+      punchCooldown: 2.2,
+      punchPhase: 'none',
+      punchT: 0
     };
     enemies = [];
     enemyBullets = [];
@@ -1453,6 +1456,50 @@
       y: attachY + (b.tentacleTargetY - attachY) * reach,
       reach
     };
+  }
+
+  // シャコパンチ: 溜めてから正面（左）へ衝撃波を1回撃つ。通常の遊泳とは並行して進む
+  const MANTIS_PUNCH_AIM = 0.55;      // 溜めの時間
+  const MANTIS_PUNCH_RECOVER = 0.4;   // 打った後の硬直
+  const MANTIS_SHOCKWAVE_SPEED = 480;
+
+  function updateMantisPunch(dt) {
+    if (boss.punchPhase === 'none') {
+      boss.punchCooldown -= dt;
+      if (boss.punchCooldown <= 0) {
+        boss.punchPhase = 'aim';
+        boss.punchT = 0;
+        SFX.sharkCharge();   // 溜め音を流用
+      }
+      return;
+    }
+    if (boss.punchPhase === 'aim') {
+      boss.punchT += dt / MANTIS_PUNCH_AIM;
+      if (boss.punchT >= 1) {
+        boss.punchPhase = 'punch';
+        boss.punchT = 0;
+        SFX.sharkBite();   // 打撃音を流用
+        // 縦に並んだ衝撃波の帯を正面へ放つ
+        const n = 5;
+        for (let i = 0; i < n; i++) {
+          const oy = (i - (n - 1) / 2) * 20;
+          spawnEnemyBullet(
+            boss.x - boss.r * 0.8, boss.y + oy,
+            -MANTIS_SHOCKWAVE_SPEED, 0,
+            { r: 10, kind: 'shockwave' }
+          );
+        }
+      }
+      return;
+    }
+    if (boss.punchPhase === 'punch') {
+      boss.punchT += dt / MANTIS_PUNCH_RECOVER;
+      if (boss.punchT >= 1) {
+        boss.punchPhase = 'none';
+        boss.punchT = 0;
+        boss.punchCooldown = 3.4 + Math.random() * 1.8;
+      }
+    }
   }
 
   // サメの噛みつき突進。突進中はtrueを返し、通常の遊泳・射撃を止める
@@ -1592,6 +1639,9 @@
       }
     }
 
+    // シャコの固有攻撃: 溜めてから正面へ衝撃波（シャコパンチ）
+    if (boss.kind === 'mantis') updateMantisPunch(dt);
+
     boss.fireCooldown -= dt;
     if (boss.fireCooldown <= 0) {
       if (boss.kind === 'squid') {
@@ -1625,6 +1675,14 @@
           const ang = Math.PI + a;   // Math.PI = 左向き
           spawnEnemyBullet(boss.x, boss.y, Math.cos(ang) * speed, Math.sin(ang) * speed);
         }
+      } else if (boss.kind === 'mantis') {
+        // シャコパンチが主な脅威なので、通常弾は狙い撃ちの単発だけに抑える
+        boss.fireCooldown = 1.4;
+        const speed = 210;
+        const dx = player.x - boss.x;
+        const dy = player.y - boss.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed);
       } else {
         boss.fireCooldown = 0.9;
         const speed = 220;
@@ -3043,6 +3101,80 @@
     }
   }
 
+  function drawMantisBossBody(R) {
+    const bodyColor = '#2fa66a';
+    const bandColor = '#1c7a4a';
+    const clawColor = '#7fe0a8';
+    const t = boss.t;
+
+    // 節のある体（横長、後方は画面右）
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R * 1.15, R * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 体節の縞
+    ctx.strokeStyle = bandColor;
+    ctx.lineWidth = Math.max(2, R * 0.05);
+    for (let i = -2; i <= 2; i++) {
+      const x = i * R * 0.32;
+      ctx.beginPath();
+      ctx.moveTo(x, -R * 0.5);
+      ctx.lineTo(x, R * 0.5);
+      ctx.stroke();
+    }
+    // 尾びれ（後方＝右）
+    ctx.fillStyle = bandColor;
+    ctx.beginPath();
+    ctx.moveTo(R * 0.95, -R * 0.4);
+    ctx.lineTo(R * 1.5, 0);
+    ctx.lineTo(R * 0.95, R * 0.4);
+    ctx.closePath();
+    ctx.fill();
+
+    // 目
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+    drawEvilEye(-R * 0.85, -R * 0.15, R * 0.13, '#ff2a1a', 8 + pulse * 6);
+    drawEvilEye(-R * 0.85, R * 0.15, R * 0.13, '#ff2a1a', 8 + pulse * 6);
+
+    // 前脚の打突腕（シャコパンチ）。溜め中は引き、打撃の瞬間に伸びる
+    let armPull = 0, armExtend = 0;
+    if (boss.punchPhase === 'aim') armPull = Math.min(1, boss.punchT);
+    if (boss.punchPhase === 'punch') armExtend = 1 - Math.min(1, boss.punchT);
+    const armBaseX = -R * 0.75;
+    const armX = armBaseX - armPull * R * 0.3 + armExtend * R * 1.4;
+
+    for (const dir of [-1, 1]) {
+      ctx.save();
+      ctx.strokeStyle = clawColor;
+      ctx.fillStyle = clawColor;
+      ctx.lineWidth = Math.max(3, R * 0.1);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(armBaseX, dir * R * 0.3);
+      ctx.lineTo(armX, dir * R * 0.22);
+      ctx.stroke();
+      // 打突部の先端（棍棒状）
+      ctx.beginPath();
+      ctx.ellipse(armX, dir * R * 0.22, R * 0.16, R * 0.11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 溜め中は打突腕のまわりに緊張の光を出す
+    if (boss.punchPhase === 'aim') {
+      const glow = 0.4 + 0.6 * Math.min(1, boss.punchT);
+      ctx.save();
+      ctx.shadowColor = '#ffe08a';
+      ctx.shadowBlur = 6 + glow * 14;
+      ctx.strokeStyle = `rgba(255,224,138,${glow})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(armBaseX, 0, R * 0.45, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   function drawSquidBossBody(R) {
     const mantleColor = '#7a1f3d';
     const t = boss.t;
@@ -3204,6 +3336,7 @@
     drawSharkChargeFx(R);
     if (boss.kind === 'crab') drawCrabBossBody(R);
     else if (boss.kind === 'squid') drawSquidBossBody(R);
+    else if (boss.kind === 'mantis') drawMantisBossBody(R);
     else {
       // 戻りは右向きに泳ぐので、絵も反転させる
       if (boss.chargePhase === 'back') ctx.scale(-1, 1);
@@ -3302,6 +3435,22 @@
         ctx.shadowBlur = 0;
         ctx.strokeStyle = '#8f3d16';
         ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+      } else if (b.kind === 'shockwave') {
+        // シャコパンチの衝撃波。進行方向に長い半透明の帯
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.shadowColor = '#ffe08a';
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = 'rgba(255,224,138,0.5)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, b.r * 2.4, b.r * 0.65, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.restore();
       } else {
