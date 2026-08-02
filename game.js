@@ -1463,7 +1463,7 @@
 
   const BOSS_FIRE_SPREAD = {
     shark: [-60, 0, 60],
-    crab: [-110, -55, 0, 55, 110]
+    crab: [-90, -30, 30, 90]
   };
   // サメの3方向弾の角度（正面＝左からのずれ。約±30度）
   const SHARK_FIRE_ANGLES = [-0.52, 0, 0.52];
@@ -1781,7 +1781,7 @@
           spawnEnemyBullet(boss.x, boss.y, Math.cos(a) * speed, Math.sin(a) * speed);
         }
       } else if (boss.kind === 'crab') {
-        boss.fireCooldown = 0.85;
+        boss.fireCooldown = 1.0;
         const speed = 150;
         const offsets = BOSS_FIRE_SPREAD.crab;
         for (const dyOff of offsets) {
