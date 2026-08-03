@@ -307,13 +307,22 @@
     enemyBullets = [];
     resetVolcanoes();
     resetWhirlpools();
-    resetDive();
     resetWreckage();
     killCount = 0;
     bossIndex = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
     if (currentStage < STAGES.length) {
+      const prevHazard = STAGES[currentStage - 1].hazard;
       currentStage += 1;
+      const nextHazard = STAGES[currentStage - 1].hazard;
+      // 4面→5面は同じ深海の続きなので、穴くぐりの潜航演出をやり直さない（本編の遷移と同じ扱い）
+      if (prevHazard === 'dive' && nextHazard === 'darkdive') {
+        diveMode = 'deep';
+        diveDepth = DIVE_BOTTOM_DEPTH;
+        deepTimer = DEEP_BOSS_DELAY;
+      } else {
+        resetDive();
+      }
       stageBannerTimer = 2.2;
       stageBannerText = `STAGE ${currentStage}`;
     } else {
