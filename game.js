@@ -2376,11 +2376,18 @@
           checkpointAtBoss = false;
           bossIndex = 0;
           if (currentStage < STAGES.length) {
+            const prevHazard = STAGES[currentStage - 1].hazard;
             currentStage += 1;
+            const nextHazard = STAGES[currentStage - 1].hazard;
             killCount = 0;
             resetVolcanoes();
             resetWhirlpools();
-            resetDive();
+            // 4面→5面は同じ深海の続きなので、穴くぐりの潜航演出をやり直さない
+            if (prevHazard === 'dive' && nextHazard === 'darkdive') {
+              deepTimer = DEEP_BOSS_DELAY;
+            } else {
+              resetDive();
+            }
             resetWreckage();
             spawnTimer = Math.max(spawnTimer, 1.2);
             stageBannerTimer = 2.2;
