@@ -572,6 +572,36 @@
     ctx.stroke();
   }
 
+  // 深海（潜航後の横スクロール）の天井。海底と対になる見た目にする
+  function drawCeiling() {
+    const step = 5;
+
+    const grad = ctx.createLinearGradient(0, 0, 0, playH * 0.45);
+    grad.addColorStop(0, '#0e2018');
+    grad.addColorStop(1, '#2b4a3a');
+    ctx.fillStyle = grad;
+
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (let sx = 0; sx <= W; sx += step) {
+      ctx.lineTo(sx, ceilingSurfaceY(sx));
+    }
+    ctx.lineTo(W, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // 稜線のハイライト
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let sx = 0; sx <= W; sx += step) {
+      const y = ceilingSurfaceY(sx);
+      if (sx === 0) ctx.moveTo(sx, y);
+      else ctx.lineTo(sx, y);
+    }
+    ctx.stroke();
+  }
+
   // ---------- 海底（起伏のある地形。当たり判定あり） ----------
   const TERRAIN_SCROLL_SPEED = 110;
   const TERRAIN_PERIOD = 700;
@@ -673,7 +703,9 @@
 
   // 潜航中かどうかで地形の当たり判定を切り替える
   function collidesWorld(x, y, r) {
-    return diveMode === 'diving' ? collidesCave(x, y, r) : collidesTerrain(x, y, r);
+    if (diveMode === 'diving') return collidesCave(x, y, r);
+    if (diveMode === 'deep' && collidesCeiling(x, y, r)) return true;
+    return collidesTerrain(x, y, r);
   }
 
   // 画面座標xにおける海底の表面のy座標
@@ -683,6 +715,26 @@
 
   function collidesTerrain(x, y, r) {
     return y + r > terrainSurfaceY(x);
+  }
+
+  // ---------- 深海（潜航後の横スクロール）の天井（当たり判定あり） ----------
+  // 海底の起伏(rolling+jag)と同じ考え方だが、位相と周期をずらして海底とは違う見た目にする。
+  // 大きな山（火山・残骸）は乗せず、ボス戦中は海底と同じくbossArenaScale()で退かせて圧迫感を抑える
+  function ceilingHeightAt(worldX) {
+    const rolling = 16 + Math.sin(worldX * 0.0035 + 4.1) * 9 + Math.sin(worldX * 0.0097 + 0.6) * 5;
+    const jag =
+      Math.abs(Math.sin(worldX * 0.081 + 2.3)) * 6 +
+      Math.abs(Math.sin(worldX * 0.21 + 4.8)) * 3.5;
+    return (rolling + jag) * bossArenaScale();
+  }
+
+  // 画面座標xにおける天井の表面のy座標
+  function ceilingSurfaceY(screenX) {
+    return ceilingHeightAt(screenX + terrainOffset);
+  }
+
+  function collidesCeiling(x, y, r) {
+    return y - r < ceilingSurfaceY(x);
   }
 
   function updateTerrain(dt) {
@@ -2184,7 +2236,7 @@
     player.y = Math.max(player.size, Math.min(playH - player.size, player.y));
     player.x = Math.max(playerMinX(), Math.min(playerMaxX(), player.x));
 
-    // 地形との当たり判定（潜航中は縦穴の左右の岩壁）
+    // 地形との当たり判定（潜航中は縦穴の左右の岩壁、深海は天井もある）
     if (diveMode === 'diving') {
       if (collidesCave(player.x, player.y, player.hitRadius)) {
         hitPlayer();
@@ -2192,6 +2244,9 @@
         const r = caveRightAt(player.y) - player.hitRadius;
         player.x = Math.max(l, Math.min(r, player.x));
       }
+    } else if (diveMode === 'deep' && collidesCeiling(player.x, player.y, player.hitRadius)) {
+      hitPlayer();
+      player.y = ceilingSurfaceY(player.x) + player.hitRadius;
     } else if (collidesTerrain(player.x, player.y, player.hitRadius)) {
       hitPlayer();
       player.y = terrainSurfaceY(player.x) - player.hitRadius;
@@ -4448,6 +4503,7 @@
       } else {
         if (diveMode === 'deep' && !isDarkDive) drawDepthDarkness();
         drawTerrain();
+        if (diveMode === 'deep') drawCeiling();
       }
       if (volcanoActive) drawVolcanoes();
       if (wreckageActive) drawWreckage();
