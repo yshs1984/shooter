@@ -4411,22 +4411,6 @@
     ctx.fillRect(0, 0, W, playH);
   }
 
-  // 5面専用: 自機の周りだけを照らすライト。全オブジェクト描画後に乗算合成で重ねることで、
-  // ライトの外側は暗く沈みつつも発光生物（shadowBlurで光る敵・弾）だけはうっすら見える
-  function drawPlayerLight() {
-    const innerR = 85;
-    const outerR = 240;
-    const grad = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, outerR);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(innerR / outerR, 'rgba(255,255,255,1)');
-    grad.addColorStop(1, 'rgba(16,20,26,1)');
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, playH);
-    ctx.restore();
-  }
-
   // 潜航中の縦穴（左右の岩壁）
   function drawCaveWalls() {
     const step = 5;
@@ -4496,12 +4480,11 @@
         const k = shakeMag * Math.min(1, shakeT / 0.2);
         ctx.translate((Math.random() - 0.5) * k * 2, (Math.random() - 0.5) * k * 2);
       }
-      const isDarkDive = STAGES[currentStage - 1].hazard === 'darkdive';
       if (diveMode === 'diving') {
-        if (!isDarkDive) drawDepthDarkness();
+        drawDepthDarkness();
         drawCaveWalls();
       } else {
-        if (diveMode === 'deep' && !isDarkDive) drawDepthDarkness();
+        if (diveMode === 'deep') drawDepthDarkness();
         drawTerrain();
         if (diveMode === 'deep') drawCeiling();
       }
@@ -4519,8 +4502,6 @@
       drawParticles();
       // 墨は自機や敵の上に被せて視界を奪う（HUDより下）
       drawInk();
-      // 5面の暗闇は全オブジェクトを描いたあとにポストプロセスとして重ねる
-      if (isDarkDive && (diveMode === 'diving' || diveMode === 'deep')) drawPlayerLight();
       ctx.restore();
 
       drawHud();
