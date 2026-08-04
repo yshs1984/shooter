@@ -32,7 +32,8 @@
 const STAGES = [
   { hazard: 'volcano',   bosses: [{ kind: 'mantis',       hp: 75,  score: 650 }] },
   { hazard: 'whirlpool', bosses: [{ kind: 'crab',         hp: 90,  score: 800 }] },
-  { hazard: 'wreckage',  bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
+  { hazard: 'wreckage',  midBoss: { kind: 'merman', hp: 45, score: 400 },
+                         bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
   { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] },
   { hazard: 'darkdive',  bosses: [
       { kind: 'squid',       hp: 130, score: 900,  variant: 'enraged' },
@@ -46,15 +47,18 @@ const STAGES = [
 - 4面(`dive`)→5面(`darkdive`)の遷移だけは特別扱い: 両方とも潜航ロジック（`updateDive`）を共有するステージなので、`resetDive()` を呼ばず `diveMode` を `'deep'` のまま維持し、`deepTimer` だけ `DEEP_BOSS_DELAY` にリセットする（穴くぐりの潜航演出を繰り返さないため）。それ以外のステージ遷移は `resetDive()` で潜航状態を初期化する
 - `debugSkipStage()`（デバッグのSTAGEボタン）も本編のボス撃破遷移と同じ4面→5面特別扱いロジックを持つ（別実装なので変更時は両方直すこと）
 - `STAGE_ENEMY_WEIGHTS`（雑魚敵の出現重みテーブル）は `STAGES` とは別配列で、ステージ数と同じ5要素
+- `midBoss` は任意。定義があるステージだけ、撃破数が `MIDBOSS_KILL_THRESHOLD`(22) に達したときに道中の中ボスが出る（詳細は次章）
+- `midBossDone`（そのステージで中ボスを出したか）は、**`killCount = 0` を行っている箇所すべてで一緒にリセットする**。現在は `startGame()` / `continueGame()`のステージ再開側 / ボス撃破によるステージ進行 / `debugSkipStage()` の4箇所
 
 ---
 
 ## 3. ボス仕様
 
-ボスは `kind` 文字列で種別を判定する共通オブジェクト（`spawnBoss()`で生成）。`updateBoss()` / `drawBoss()` 内で `if (boss.kind === '...')` のディスパッチにより挙動・見た目を分岐する。
+ボスは `kind` 文字列で種別を判定する共通オブジェクト（`makeBoss()`で生成し、`spawnBoss()` / `spawnMidBoss()` から使う）。`updateBoss()` / `drawBoss()` 内で `if (boss.kind === '...')` のディスパッチにより挙動・見た目を分岐する。
 
 | kind | 名称 | 登場 | 攻撃概要 |
 |---|---|---|---|
+| `merman` | 半魚人（**中ボス**） | 3面の道中 | 構え(`HARPOON_AIM`=0.5秒、目が赤く光って予告)→自機を通り越す位置まで銛を投げ、ワイヤーで手元へ引き戻す（`updateMermanHarpoon` / `mermanHarpoonTip`）。通常弾は控えめな単発のみ |
 | `crab` | カニ | 2面 | 自機狙いの4方向拡散弾（`BOSS_FIRE_SPREAD.crab`）を1.0秒間隔で発射 |
 | `mantis` | シャコ | 1面 | 単発の狙い撃ち（1.4秒間隔）＋「シャコパンチ」: 溜め(`MANTIS_PUNCH_AIM`=0.55秒、打突腕が光って予告)→正面へ衝撃波弾を5発（`updateMantisPunch`） |
 | `ghostoctopus` | 幽霊船の主（巨大タコ） | 3面 | 海底から複数本の触腕を同時に突き上げる叩きつけ（`GHOST_SLAM_COUNT`=2本、`GHOST_SLAM_TELEGRAPH`=0.6秒の予告あり）＋墨 |
@@ -64,6 +68,16 @@ const STAGES = [
 - `boss.variant`（`'normal'` | `'enraged'`）は同じ`kind`の強化版を表す汎用フィールド。`updateBoss()`/`draw<Kind>BossBody`内で分岐に使う
 - ボス戦中も雑魚敵が間引かれて出現し（`BOSS_FIGHT_EXCLUDED`, `BOSS_FIGHT_SPAWN_INTERVAL`）、アイテムドロップ率が上がる（`ITEM_DROP_CHANCE_BOSS`）。これは`boss`の有無だけを見た汎用ロジックなので、新ボス追加時に個別対応不要
 - ボス戦中は`bossArenaScale()`により海底・天井（深海の場合）が退いて（`BOSS_ARENA_FLATTEN`=0.45倍）圧迫事故を減らす
+- **`drawBoss()`のディスパッチにはフォールバックの`else`が無い**。新しい`kind`を足すときに描画関数の追加を忘れると、当たり判定はあるのに何も表示されないボスになる
+
+### 中ボス（`boss.isMid`）
+
+中ボスは専用の変数や更新系を持たず、**同じ`boss`スロットを`isMid: true`で流用する**。これによりHPバー描画・海底の沈降・雑魚の間引き出現・アイテムドロップ率上昇がすべて無改修で効く。通常ボスとの違いは2点だけ:
+
+- **`checkpointAtBoss`を立てない**。中ボスは道中扱いなので、ここで力尽きたらステージの最初からやり直しになる（立ててしまうと`continueGame()`が`spawnBoss()`でステージボスを出してしまう）
+- **撃破時にステージ進行の経路へ入らない**。スコア加算・撃破エフェクト・`spawnItem()`による確定ドロップを行ったあと、`killCount`を`MIDBOSS_KILL_THRESHOLD`へ巻き戻して終わる
+
+`killCount`の巻き戻しは必須。中ボス戦の最中も雑魚が出続けて撃破数が伸びるため、巻き戻さないと中ボスを倒した瞬間にステージボスが即出現してしまう（`tools/verify.mjs`の`midboss`シナリオがこの退行を検出する）。
 
 ---
 
@@ -157,6 +171,7 @@ node tools/verify.mjs --list      # シナリオ一覧
 | `smoke` | **通常モード**（`?debug=1`なし）で起動・プレイし、`pageerror`がゼロであること／`window.__t`が漏れていないことを表明 |
 | `stages` | ボス撃破による実際の遷移で1→5面を走破。各面のhazard・ボスの`kind`/`variant`、5面の連戦、最終撃破後の`ending`到達までを表明 |
 | `dive` | 4面→5面で潜航演出が重複しないこと（#100/#103の回帰）。本編の遷移とデバッグの`skipStage()`は別実装なので両方を個別に表明 |
+| `midboss` | 3面の中ボス（半魚人）が出現・撃破でき、ステージ進行に関与しないこと。確定ドロップと撃破数の巻き戻しも表明。中ボスを持たない1面では出現しないことも確認 |
 | `bosses` | 全ボスを順に出現させてスクリーンショット（見た目変更時の目視確認用） |
 | `hazards` | 各ステージのhazardを発生させ、実際に発生したことを表明したうえでスクリーンショット |
 

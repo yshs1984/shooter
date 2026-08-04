@@ -171,18 +171,23 @@
   // ---------- 面構成 ----------
   // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
   // bosses: そのステージで戦うボスの並び（通常1体。連戦ステージは複数）
+  // midBoss: 道中に挟まる中ボス（任意。無いステージでは未定義のまま）
   const STAGES = [
     { hazard: 'volcano',   bosses: [{ kind: 'mantis',       hp: 75,  score: 650 }] },
     { hazard: 'whirlpool', bosses: [{ kind: 'crab',         hp: 90,  score: 800 }] },
-    { hazard: 'wreckage',  bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
+    { hazard: 'wreckage',  midBoss: { kind: 'merman', hp: 45, score: 400 },
+                           bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
     { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] },
     { hazard: 'darkdive',  bosses: [
         { kind: 'squid',       hp: 130, score: 900,  variant: 'enraged' },
         { kind: 'goblinshark', hp: 140, score: 1200 }
       ] }
   ];
+  // 中ボスは障害の発生(14)とステージボス(30)の間に出す
+  const MIDBOSS_KILL_THRESHOLD = 22;
   let currentStage = 1;
   let bossIndex = 0;   // 現在のステージ内で何体目のボスと戦っているか（連戦用）
+  let midBossDone = false;   // このステージで中ボスを出したか（killCountを0に戻す箇所で一緒にリセットする）
   let stageBannerTimer = 0;
   let stageBannerText = '';
 
@@ -309,6 +314,7 @@
     resetWhirlpools();
     resetWreckage();
     killCount = 0;
+    midBossDone = false;
     bossIndex = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
     if (currentStage < STAGES.length) {
@@ -1529,19 +1535,19 @@
   // サメの3方向弾の角度（正面＝左からのずれ。約±30度）
   const SHARK_FIRE_ANGLES = [-0.52, 0, 0.52];
 
-  function spawnBoss() {
-    // ここ以降に力尽きたらボス戦から再開する
-    checkpointAtBoss = true;
-    SFX.bossAppear();
-    const def = STAGES[currentStage - 1].bosses[bossIndex];
+  // ボスと中ボスで共通の実体を作る。フィールドが多いので、
+  // 両方から同じものを使えるようにここへ切り出している
+  function makeBoss(def, isMid) {
     const baseX = W - 140;
-    boss = {
+    return {
       kind: def.kind,
       variant: def.variant || 'normal',
+      isMid: !!isMid,
       x: W + 80,
       baseX,
       y: playH / 2,
-      r: 46,
+      // 中ボスは一回り小さくして、ステージボスとの格の違いを見せる
+      r: isMid ? 34 : 46,
       hp: def.hp,
       maxHp: def.hp,
       t: 0,
@@ -1570,12 +1576,40 @@
       slamPhase: 'none',
       slamT: 0,
       slamXs: [],
-      ghostInkCooldown: 2.0
+      ghostInkCooldown: 2.0,
+      harpoonCooldown: 1.6,   // 半魚人専用: 銛の投擲
+      harpoonPhase: 'none',
+      harpoonT: 0,
+      harpoonTargetX: 0,
+      harpoonTargetY: 0
     };
+  }
+
+  // ボス戦に入るときは盤面を整理する（ボス・中ボス共通）
+  function clearFieldForBoss() {
     enemies = [];
     enemyBullets = [];
     inkClouds = [];
     resetWhirlpools();
+  }
+
+  function spawnBoss() {
+    // ここ以降に力尽きたらボス戦から再開する
+    checkpointAtBoss = true;
+    SFX.bossAppear();
+    boss = makeBoss(STAGES[currentStage - 1].bosses[bossIndex], false);
+    clearFieldForBoss();
+  }
+
+  // 道中に挟まる中ボス。checkpointAtBossは立てないので、
+  // ここで力尽きたらステージの最初からやり直しになる
+  function spawnMidBoss() {
+    SFX.bossAppear();
+    boss = makeBoss(STAGES[currentStage - 1].midBoss, true);
+    midBossDone = true;
+    stageBannerTimer = 2.0;
+    stageBannerText = 'MID BOSS';
+    clearFieldForBoss();
   }
 
   function squidTentacleTip(b) {
@@ -1589,6 +1623,66 @@
       y: attachY + (b.tentacleTargetY - attachY) * reach,
       reach
     };
+  }
+
+  // 半魚人の銛: 構えてから自機の向こう側まで投げ、ワイヤーで手元へ引き戻す。
+  // イカの触腕と同じく reach=sin(t*PI) で 0→1→0 と往復するが、以下が異なる:
+  //   - 投げる前に構え(aim)があり、光って予告する
+  //   - 行きも帰りも当たる（イカは伸びきり付近だけ）
+  //   - 自機の位置を通り越すところまで投げるので、その場に留まっても避けられない
+  //   - 引き戻す先はその時点の手元なので、本体が泳ぐぶん復路の線がずれる
+  const HARPOON_AIM = 0.5;        // 構えの時間
+  const HARPOON_FLIGHT = 0.9;     // 投げてから戻りきるまで
+  const HARPOON_OVERSHOOT = 90;   // 自機位置をどれだけ通り越すか(px)
+  const HARPOON_HIT_R = 12;
+
+  // 銛先の位置。手元と目標の間を reach で補間する
+  function mermanHarpoonTip(b) {
+    const attachX = b.x - b.r * 0.5;
+    const attachY = b.y + b.r * 0.1;
+    const reach = Math.sin(Math.min(1, b.harpoonT) * Math.PI);
+    return {
+      x: attachX + (b.harpoonTargetX - attachX) * reach,
+      y: attachY + (b.harpoonTargetY - attachY) * reach,
+      attachX,
+      attachY,
+      reach
+    };
+  }
+
+  function updateMermanHarpoon(dt) {
+    if (boss.harpoonPhase === 'none') {
+      boss.harpoonCooldown -= dt;
+      if (boss.harpoonCooldown <= 0) {
+        boss.harpoonPhase = 'aim';
+        boss.harpoonT = 0;
+        SFX.sharkCharge();   // 溜め音を流用
+      }
+      return;
+    }
+
+    if (boss.harpoonPhase === 'aim') {
+      boss.harpoonT += dt / HARPOON_AIM;
+      if (boss.harpoonT >= 1) {
+        boss.harpoonPhase = 'throw';
+        boss.harpoonT = 0;
+        SFX.sharkBite();   // 投擲音を流用
+        // 自機の位置を通り越した先を狙う
+        const dx = player.x - boss.x;
+        const dy = player.y - boss.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        boss.harpoonTargetX = player.x + (dx / len) * HARPOON_OVERSHOOT;
+        boss.harpoonTargetY = player.y + (dy / len) * HARPOON_OVERSHOOT;
+      }
+      return;
+    }
+
+    boss.harpoonT += dt / HARPOON_FLIGHT;
+    if (boss.harpoonT >= 1) {
+      boss.harpoonPhase = 'none';
+      boss.harpoonT = 0;
+      boss.harpoonCooldown = 1.8 + Math.random() * 1.2;
+    }
   }
 
   // シャコパンチ: 溜めてから正面（左）へ衝撃波を1回撃つ。通常の遊泳とは並行して進む
@@ -1819,6 +1913,9 @@
     // シャコの固有攻撃: 溜めてから正面へ衝撃波（シャコパンチ）
     if (boss.kind === 'mantis') updateMantisPunch(dt);
 
+    // 半魚人の固有攻撃: 銛を投げてワイヤーで引き戻す
+    if (boss.kind === 'merman') updateMermanHarpoon(dt);
+
     // 幽霊船の主の固有攻撃: 触腕叩きつけ＋墨
     if (boss.kind === 'ghostoctopus') {
       updateGhostOctopusSlam(dt);
@@ -1880,6 +1977,17 @@
         const dy = player.y - boss.y;
         const len = Math.max(1, Math.hypot(dx, dy));
         spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed, { r: 6 });
+      } else if (boss.kind === 'merman') {
+        // 銛が主な脅威なので、通常弾は控えめな単発だけ。
+        // 銛を構えている間は撃たず、避けに集中させる
+        boss.fireCooldown = 1.6;
+        if (boss.harpoonPhase === 'none') {
+          const speed = 200;
+          const dx = player.x - boss.x;
+          const dy = player.y - boss.y;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          spawnEnemyBullet(boss.x, boss.y, (dx / len) * speed, (dy / len) * speed, { r: 5 });
+        }
       } else {
         boss.fireCooldown = 0.9;
         const speed = 220;
@@ -2148,6 +2256,7 @@
     } else {
       // ステージの最初からやり直す
       killCount = 0;
+      midBossDone = false;
       bossIndex = 0;
       resetVolcanoes();
       resetWhirlpools();
@@ -2171,6 +2280,7 @@
     endingT = 0;
     elapsed = 0;
     killCount = 0;
+    midBossDone = false;
     enemies = [];
     playerBullets = [];
     enemyBullets = [];
@@ -2327,10 +2437,14 @@
       updateWreckage(dt);
 
       // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
+      const midDef = STAGES[currentStage - 1].midBoss;
       if (hazard === 'dive' || hazard === 'darkdive') {
         if (diveMode === 'deep' && deepTimer <= 0) {
           spawnBoss();
         }
+      } else if (midDef && !midBossDone && killCount >= MIDBOSS_KILL_THRESHOLD) {
+        // ステージボスより手前の撃破数なので、中ボスのほうが必ず先に出る
+        spawnMidBoss();
       } else if (killCount >= BOSS_KILL_THRESHOLD) {
         spawnBoss();
       }
@@ -2420,7 +2534,19 @@
           SFX.bossHit();
         }
       }
-      if (boss.hp <= 0) {
+      if (boss.hp <= 0 && boss.isMid) {
+        // 中ボスはステージ進行に関与しない。倒した見返りにアイテムを確定で落とす
+        score += STAGES[currentStage - 1].midBoss.score;
+        spawnBurst(boss.x, boss.y, '#ffd166', 26, 280, 5);
+        spawnBurst(boss.x, boss.y, '#7ef0c0', 18, 190, 4);
+        shakeScreen(7, 0.4);
+        spawnItem(boss.x, boss.y);
+        boss = null;
+        SFX.bossDown();
+        // 中ボス戦の最中も雑魚が出て撃破数が伸びるため、そのままだとステージボスが
+        // 即座に出てしまう。撃破数を戻してステージボスまでの間合いを確保する
+        killCount = MIDBOSS_KILL_THRESHOLD;
+      } else if (boss.hp <= 0) {
         const stageBosses = STAGES[currentStage - 1].bosses;
         score += stageBosses[bossIndex].score;
         spawnBurst(boss.x, boss.y, '#ffd166', 34, 320, 6);
@@ -2444,6 +2570,7 @@
             currentStage += 1;
             const nextHazard = STAGES[currentStage - 1].hazard;
             killCount = 0;
+            midBossDone = false;
             resetVolcanoes();
             resetWhirlpools();
             // 4面→5面は同じ深海の続きなので、穴くぐりの潜航演出をやり直さない
@@ -2492,6 +2619,14 @@
     if (boss && boss.kind === 'squid' && boss.tentacleActive) {
       const tip = squidTentacleTip(boss);
       if (tip.reach > 0.5 && dist(tip.x, tip.y, player.x, player.y) < 14 + player.hitRadius) {
+        hitPlayer();
+      }
+    }
+
+    // 半魚人の銛 vs 自機。行きも帰りも当たるので、投擲中はずっと判定する
+    if (boss && boss.kind === 'merman' && boss.harpoonPhase === 'throw') {
+      const tip = mermanHarpoonTip(boss);
+      if (dist(tip.x, tip.y, player.x, player.y) < HARPOON_HIT_R + player.hitRadius) {
         hitPlayer();
       }
     }
@@ -3278,6 +3413,190 @@
     ctx.restore();
   }
 
+  // 半魚人。魚の頭に人型の胴と腕、脚はひれ。手に銛を持つ（前方＝左を向いている）
+  function drawMermanBossBody(R) {
+    const skin = '#3f7d63';
+    const skinDark = '#2b5946';
+    const belly = '#a8dcc0';
+    const finColor = '#5fae88';
+    const t = boss.t;
+    const swim = Math.sin(t * 3.2);   // 泳ぎの揺れ
+
+    // 脚（下へ伸びる2本。人型に見せたいので胴から下向きに生やす）
+    for (const side of [-1, 1]) {
+      const sway = swim * R * 0.1 * side;
+      ctx.strokeStyle = skinDark;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = R * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(R * 0.05 * side, R * 0.5);
+      ctx.quadraticCurveTo(R * 0.25 + sway, R * 0.95, R * 0.5 + sway, R * 1.25);
+      ctx.stroke();
+      // 足先の水かき
+      ctx.fillStyle = finColor;
+      ctx.beginPath();
+      ctx.moveTo(R * 0.5 + sway, R * 1.25);
+      ctx.lineTo(R * 0.95 + sway, R * 1.2);
+      ctx.lineTo(R * 0.7 + sway, R * 1.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // 背びれ（後頭部から背中へ）
+    ctx.fillStyle = finColor;
+    ctx.beginPath();
+    ctx.moveTo(R * 0.45, R * 0.1);
+    ctx.lineTo(R * 0.3, -R * 0.75 + swim * R * 0.05);
+    ctx.lineTo(R * 0.1, -R * 0.35);
+    ctx.lineTo(-R * 0.05, -R * 0.95 + swim * R * 0.05);
+    ctx.lineTo(-R * 0.15, -R * 0.5);
+    ctx.closePath();
+    ctx.fill();
+
+    // 胴体（肩幅のある人型の上半身。縦に立てて魚と区別する）
+    ctx.fillStyle = skin;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.3, -R * 0.55);          // 肩（前）
+    ctx.quadraticCurveTo(R * 0.4, -R * 0.5, R * 0.4, R * 0.1);   // 背中
+    ctx.quadraticCurveTo(R * 0.3, R * 0.6, 0, R * 0.6);          // 腰
+    ctx.quadraticCurveTo(-R * 0.35, R * 0.55, -R * 0.4, R * 0.05); // 腹
+    ctx.closePath();
+    ctx.fill();
+    // 胸から腹の淡色
+    ctx.fillStyle = belly;
+    ctx.beginPath();
+    ctx.ellipse(-R * 0.12, R * 0.1, R * 0.22, R * 0.38, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 奥側の腕（先に描いて胴の後ろに回す）
+    ctx.strokeStyle = skinDark;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = R * 0.16;
+    ctx.beginPath();
+    ctx.moveTo(R * 0.05, -R * 0.35);
+    ctx.quadraticCurveTo(R * 0.45, -R * 0.1, R * 0.35 + swim * R * 0.1, R * 0.35);
+    ctx.stroke();
+
+    // 頭（魚の頭。前方へ突き出す）
+    ctx.fillStyle = skin;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.05, -R * 0.55);
+    ctx.quadraticCurveTo(-R * 0.5, -R * 0.95, -R * 0.95, -R * 0.6);
+    ctx.quadraticCurveTo(-R * 1.25, -R * 0.35, -R * 0.95, -R * 0.15);
+    ctx.quadraticCurveTo(-R * 0.5, -R * 0.05, -R * 0.15, -R * 0.25);
+    ctx.closePath();
+    ctx.fill();
+    // 顎（開いた口）
+    ctx.fillStyle = skinDark;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.95, -R * 0.3);
+    ctx.lineTo(-R * 1.2, -R * 0.22);
+    ctx.lineTo(-R * 0.9, -R * 0.12);
+    ctx.closePath();
+    ctx.fill();
+
+    // 頬のエラ
+    ctx.strokeStyle = skinDark;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const gx = -R * 0.3 + i * R * 0.12;
+      ctx.beginPath();
+      ctx.moveTo(gx, -R * 0.62);
+      ctx.quadraticCurveTo(gx - R * 0.05, -R * 0.45, gx, -R * 0.3);
+      ctx.stroke();
+    }
+
+    // 目（銛を構えている間は赤く光らせて予告する）
+    const aiming = boss.harpoonPhase === 'aim';
+    const glow = aiming ? 0.5 + 0.5 * Math.sin(t * 18) : 0;
+    ctx.save();
+    if (aiming) {
+      ctx.shadowColor = '#ff4646';
+      ctx.shadowBlur = 8 + glow * 14;
+    }
+    ctx.fillStyle = aiming ? '#ff6a5a' : '#ffe08a';
+    ctx.beginPath();
+    ctx.arc(-R * 0.72, -R * 0.55, R * 0.17, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#101c18';
+    ctx.beginPath();
+    ctx.arc(-R * 0.76, -R * 0.55, R * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 銛を持つ手前側の腕。構え中は後ろへ引き絞り、投げた後は前へ突き出す
+    const armReach = boss.harpoonPhase === 'aim'
+      ? -0.2 - boss.harpoonT * 0.5
+      : (boss.harpoonPhase === 'throw' ? 0.55 : 0.15);
+    const handX = -R * (0.3 + armReach);
+    const handY = R * 0.15;
+    ctx.strokeStyle = skin;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = R * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.1, -R * 0.3);
+    ctx.quadraticCurveTo(-R * 0.25, -R * 0.05, handX, handY);
+    ctx.stroke();
+
+    // 銛は投擲中だけ本体から離れる（飛んでいる銛は drawMermanHarpoon が描く）
+    if (boss.harpoonPhase !== 'throw') {
+      ctx.save();
+      ctx.translate(handX, handY);
+      drawHarpoonShape(R);
+      ctx.restore();
+    }
+  }
+
+  // 銛そのもの（穂先が左を向いた状態で原点に描く）
+  function drawHarpoonShape(R) {
+    ctx.strokeStyle = '#c9b48a';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(2, R * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(R * 0.55, R * 0.18);
+    ctx.lineTo(-R * 0.75, -R * 0.18);
+    ctx.stroke();
+
+    // 穂先（three-pronged）
+    ctx.fillStyle = '#dfe8ee';
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.75, -R * 0.18);
+    ctx.lineTo(-R * 1.1, -R * 0.3);
+    ctx.lineTo(-R * 0.8, -R * 0.05);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#dfe8ee';
+    ctx.lineWidth = Math.max(1.5, R * 0.04);
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.72, -R * 0.22);
+    ctx.lineTo(-R * 1.0, -R * 0.42);
+    ctx.moveTo(-R * 0.78, -R * 0.12);
+    ctx.lineTo(-R * 1.02, -R * 0.02);
+    ctx.stroke();
+  }
+
+  // 飛んでいる銛とワイヤー。位置がワールド座標なので本体の描画とは別に描く
+  function drawMermanHarpoon() {
+    const tip = mermanHarpoonTip(boss);
+
+    // 手元と銛を結ぶワイヤー
+    ctx.strokeStyle = 'rgba(220,230,235,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(tip.attachX, tip.attachY);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+
+    // 進行方向へ向けて銛を描く
+    const dx = tip.x - tip.attachX;
+    const dy = tip.y - tip.attachY;
+    ctx.save();
+    ctx.translate(tip.x, tip.y);
+    ctx.rotate(Math.atan2(dy, dx) + Math.PI);
+    drawHarpoonShape(boss.r * 1.15);
+    ctx.restore();
+  }
+
   function drawCrabBossBody(R) {
     const shellColor = '#8a3a2c';
     const clawColor = '#b0492f';
@@ -3713,6 +4032,7 @@
     else if (boss.kind === 'squid') drawSquidBossBody(R);
     else if (boss.kind === 'mantis') drawMantisBossBody(R);
     else if (boss.kind === 'ghostoctopus') drawGhostOctopusBossBody(R);
+    else if (boss.kind === 'merman') drawMermanBossBody(R);
     else if (boss.kind === 'goblinshark') {
       // 戻りは右向きに泳ぐので、絵も反転させる
       if (boss.chargePhase === 'back') ctx.scale(-1, 1);
@@ -3720,6 +4040,7 @@
     }
 
     ctx.restore();
+    if (boss.kind === 'merman' && boss.harpoonPhase === 'throw') drawMermanHarpoon();
     if (boss.kind === 'ghostoctopus' && boss.slamPhase === 'telegraph') drawGhostSlamTelegraph();
     drawHitFlash(boss);
 
@@ -4588,9 +4909,10 @@
           bulletType: player.bulletType, shieldHp: player.shieldHp
         },
         boss: boss ? {
-          kind: boss.kind, variant: boss.variant, hp: boss.hp,
+          kind: boss.kind, variant: boss.variant, hp: boss.hp, isMid: boss.isMid,
           jawExtend: boss.jawExtend, chargePhase: boss.chargePhase,
-          punchPhase: boss.punchPhase, slamPhase: boss.slamPhase
+          punchPhase: boss.punchPhase, slamPhase: boss.slamPhase,
+          harpoonPhase: boss.harpoonPhase
         } : null,
         counts: {
           enemies: enemies.length, enemyBullets: enemyBullets.length,
