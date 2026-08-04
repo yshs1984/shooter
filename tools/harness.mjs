@@ -150,6 +150,18 @@ function makeGame(page, errors, shotPrefix) {
   };
 }
 
+// 失敗したときの画面を残す。撮影自体が失敗しても本来のエラーを覆い隠さないよう、
+// あくまでbest effortで行う
+async function captureFailure(game, check) {
+  if (!game) return;
+  try {
+    const file = await game.shot('FAILED');
+    if (check && check.shots) check.shots.push(file);
+  } catch {
+    // ページやブラウザが既に落ちている場合は諦める
+  }
+}
+
 /**
  * ゲームを開いて fn(game) を実行し、必ず後片付けする。
  *
@@ -158,9 +170,11 @@ function makeGame(page, errors, shotPrefix) {
  *   start   — 自動でゲームを開始するか（既定 true）
  *   muteki  — 自動で無敵にするか（既定 true。debug:false のときは無視される）
  *   name    — スクリーンショットのファイル名の接頭辞
+ *   check   — 表明ヘルパ。渡すと、表明が落ちた（＝例外が飛んだ）その瞬間の画面を
+ *             ブラウザを閉じる前にスクリーンショットへ残す
  */
 export async function withGame(opts, fn) {
-  const { debug = true, start = true, muteki = true, name = 'run' } = opts || {};
+  const { debug = true, start = true, muteki = true, name = 'run', check = null } = opts || {};
 
   requireNode20();
   const { chromium } = await loadPlaywright();
@@ -176,6 +190,8 @@ export async function withGame(opts, fn) {
   const { server, port } = await startServer();
   const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
 
+  let game = null;
+
   try {
     // iPhone 13相当。このゲームはスマホ縦持ち前提のレイアウト
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -188,7 +204,7 @@ export async function withGame(opts, fn) {
       await page.waitForFunction(() => !!window.__t, null, { timeout: 5000 });
     }
 
-    const game = makeGame(page, errors, name);
+    game = makeGame(page, errors, name);
 
     if (start) {
       if (debug) {
@@ -203,6 +219,10 @@ export async function withGame(opts, fn) {
     }
 
     return await fn(game);
+  } catch (err) {
+    // 表明が落ちた／実行時エラーが出たその場の画面を、ブラウザを閉じる前に残す
+    await captureFailure(game, check);
+    throw err;
   } finally {
     await browser.close().catch(() => {});
     await new Promise((r) => server.close(r));

@@ -11,11 +11,20 @@ import { withGame, SHOT_DIR, SetupError } from './harness.mjs';
 
 // --- 表明のための最小限のヘルパ ------------------------------------------
 
+// 表明が落ちたことを表す。実行時エラーと区別するために専用の型にしている
+class AssertionFailure extends Error {}
+
+// 失敗したら即座に投げる（fail-fast）。
+// こうすることで withGame 側が「失敗した瞬間の画面」をスクリーンショットに残せる。
+// 最後まで走らせてから撮ると、そのころには画面が先へ進んでしまっていて診断に使えない
 function makeChecker() {
   const failures = [];
   const check = (cond, msg) => {
-    if (!cond) failures.push(msg);
-    return cond;
+    if (!cond) {
+      failures.push(msg);
+      throw new AssertionFailure(msg);
+    }
+    return true;
   };
   check.equal = (actual, expected, label) =>
     check(
@@ -23,6 +32,8 @@ function makeChecker() {
       `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
     );
   check.failures = failures;
+  // 失敗時に withGame が撮ったスクリーンショットのパスが積まれる
+  check.shots = [];
   return check;
 }
 
@@ -32,7 +43,7 @@ const scenarios = {
   // 通常プレイ（?debug=1なし）でエラーが出ないこと。
   // デバッグAPIを常設したことで通常プレイが壊れていないかの確認も兼ねる
   smoke: async (check) => {
-    await withGame({ name: 'smoke', debug: false }, async (game) => {
+    await withGame({ name: 'smoke', debug: false, check }, async (game) => {
       await game.page.waitForTimeout(1500);
       check(game.errors.length === 0, `コンソールエラー: ${JSON.stringify(game.errors)}`);
 
@@ -56,7 +67,7 @@ const scenarios = {
       { stage: 5, hazard: 'darkdive', kind: 'goblinshark' }  // 5面は2体連戦
     ];
 
-    await withGame({ name: 'stages' }, async (game) => {
+    await withGame({ name: 'stages', check }, async (game) => {
       const first = await game.snap();
       check.equal(first.currentStage, 1, '開始ステージ');
       check.equal(first.hazard, 'volcano', '開始hazard');
@@ -85,7 +96,7 @@ const scenarios = {
   // 4面→5面で潜航（穴くぐり）演出が繰り返されないこと。#100 / #103 の回帰。
   // 本編の遷移とデバッグのステージスキップは別実装なので、両方を個別に確認する
   dive: async (check) => {
-    await withGame({ name: 'dive' }, async (game) => {
+    await withGame({ name: 'dive', check }, async (game) => {
       // --- 本編の遷移（ボス撃破）経路 ---
       await game.call('gotoStage', 4);
       await game.call('setDive', 'deep', 2000);
@@ -115,7 +126,7 @@ const scenarios = {
     });
 
     // --- デバッグのステージスキップ経路（debugSkipStage は別実装） ---
-    await withGame({ name: 'dive-skip' }, async (game) => {
+    await withGame({ name: 'dive-skip', check }, async (game) => {
       await game.call('gotoStage', 5);
       const s = await game.snap();
       check.equal(s.currentStage, 5, 'スキップで5面へ');
@@ -128,7 +139,7 @@ const scenarios = {
 
   // 全ボスを順に出現させてスクリーンショットを撮る（見た目変更時の目視確認用）
   bosses: async (check) => {
-    await withGame({ name: 'boss' }, async (game) => {
+    await withGame({ name: 'boss', check }, async (game) => {
       const seen = [];
       // 5面は2体連戦なので、ステージ数より1回多く回す
       for (let i = 0; i < 6; i++) {
@@ -150,7 +161,7 @@ const scenarios = {
   // 各ステージのhazardを実際に発生させ、発生したことを表明したうえでスクリーンショットを撮る。
   // 火山・残骸は地形の山に乗るので、山が流れてくるまで十分にスクロールさせる必要がある
   hazards: async (check) => {
-    await withGame({ name: 'hazard' }, async (game) => {
+    await withGame({ name: 'hazard', check }, async (game) => {
       for (let stage = 1; stage <= 5; stage++) {
         if (stage > 1) await game.call('gotoStage', stage);
         await game.call('activateHazard');
@@ -211,18 +222,19 @@ async function main() {
     process.stdout.write(`▶ ${name} ... `);
     try {
       await scenarios[name](check);
-      if (check.failures.length === 0) {
-        console.log('PASS');
-        results.push({ name, ok: true });
-      } else {
-        console.log('FAIL');
-        for (const f of check.failures) console.log(`    - ${f}`);
-        results.push({ name, ok: false });
-      }
+      console.log('PASS');
+      results.push({ name, ok: true });
     } catch (err) {
       if (err instanceof SetupError) throw err;   // 環境不備は全体を止める
-      console.log('ERROR');
-      console.log(`    ${err.stack || err.message}`);
+
+      if (err instanceof AssertionFailure) {
+        console.log('FAIL');
+        for (const f of check.failures) console.log(`    - ${f}`);
+      } else {
+        console.log('ERROR');
+        console.log(`    ${err.stack || err.message}`);
+      }
+      for (const s of check.shots) console.log(`    ⤷ 失敗時の画面: ${s}`);
       results.push({ name, ok: false });
     }
   }
