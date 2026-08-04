@@ -12,7 +12,7 @@
 
 - 関数は動詞プレフィックスで揃える: `drawX`（描画）/ `updateX`（毎フレーム更新）/ `spawnX`（生成）/ `collidesX`（当たり判定）/ `resetX`（ステージ・状態のリセット）/ `handleX`（入力処理）
 - ボス本体の描画は `draw<Kind>BossBody`、雑魚敵の描画は `draw<Kind>Enemy`
-- ボス・敵・地形の種別分岐は `switch` ではなく、文字列の `kind` / `type` / `hazard` フィールドに対する `if / else if` ディスパッチで書く（既存コード全体がこのパターン）
+- 種別分岐は文字列の `kind` / `type` / `hazard` フィールドを見て行う。ボス（`updateBoss` / `drawBoss`）と地形（hazard）は `if / else if` のディスパッチ、敵の生成（`spawnEnemy()`）だけは `switch` を使っている。既存の書き方に合わせればよく、どちらかに揃え直す必要はない
 - コメントは日本語
 
 ## 禁止事項・注意点
