@@ -4571,4 +4571,74 @@
   resetPlayer();
   requestAnimationFrame(loop);
 
+  // ---------- デバッグ用の検証API ----------
+  // ?debug=1 のときだけ window.__t として生える、tools/verify.mjs から使う常設API。
+  // 通常プレイでは存在しないので影響はない。アドホックにフックを足さず、
+  // 必要な操作はここへ追加すること（詳細は docs/spec.md の検証ワークフローの章）。
+  if (DEBUG) {
+    window.__t = {
+      // 内部状態のスナップショット。Playwright側はこれを見て表明を書く
+      snap: () => ({
+        state, currentStage, bossIndex, killCount, score, lives, continuesLeft,
+        hazard: STAGES[currentStage - 1] ? STAGES[currentStage - 1].hazard : null,
+        diveMode, diveDepth, deepTimer,
+        volcanoActive, wreckageActive, whirlpoolActive,
+        player: {
+          x: player.x, y: player.y, invuln: player.invuln,
+          bulletType: player.bulletType, shieldHp: player.shieldHp
+        },
+        boss: boss ? {
+          kind: boss.kind, variant: boss.variant, hp: boss.hp,
+          jawExtend: boss.jawExtend, chargePhase: boss.chargePhase,
+          punchPhase: boss.punchPhase, slamPhase: boss.slamPhase
+        } : null,
+        counts: {
+          enemies: enemies.length, enemyBullets: enemyBullets.length,
+          playerBullets: playerBullets.length, items: items.length,
+          escorts: escorts.length, whirlpools: whirlpools.length
+        }
+      }),
+
+      // headless Chromeでは非アクティブタブのrequestAnimationFrameが極端に
+      // スロットリングされるため、検証で時間を進めるときはこれを使う
+      tick: (steps = 1, dt = 0.05) => {
+        for (let i = 0; i < steps; i++) {
+          update(dt);
+          render();
+        }
+      },
+
+      start: () => { if (state === STATE_TITLE) startGame(); },
+      setInvincible: (v) => { debugInvincible = !!v; },
+      killBoss: () => { if (boss) boss.hp = -1; },
+      spawnBossNow: () => { debugSpawnBoss(); },
+      skipStage: () => { debugSkipStage(); },
+
+      // 実際のステージ遷移ロジック（4面→5面の潜航引き継ぎ等）を通して目的の面まで進める
+      gotoStage: (n) => {
+        let guard = STAGES.length + 1;
+        while (currentStage < n && guard-- > 0) debugSkipStage();
+        return currentStage;
+      },
+
+      setKillCount: (n) => { killCount = n; },
+      setDive: (mode, depth) => {
+        diveMode = mode;
+        diveDepth = depth === undefined ? diveDepth : depth;
+        if (mode === 'deep') deepTimer = DEEP_BOSS_DELAY;
+      },
+
+      // 撃破数を発生条件まで進め、実際のupdate側の判定でhazardを起こす
+      activateHazard: () => {
+        killCount = Math.max(
+          killCount,
+          VOLCANO_TRIGGER_KILLS, WRECKAGE_TRIGGER_KILLS,
+          WHIRLPOOL_TRIGGER_KILLS, DIVE_TRIGGER_KILLS
+        );
+        update(0.05);
+        render();
+      }
+    };
+  }
+
 })();
