@@ -120,13 +120,59 @@ const STAGES = [
 
 ## 7. デバッグモードと検証ワークフロー
 
-- URLに`?debug=1`を付けると`DEBUG`定数が有効になり、通常プレイには一切影響しない
+### デバッグモード
+
+URLに`?debug=1`を付けると`DEBUG`定数が有効になる。通常プレイには一切影響しない。
+
 - 画面下部にSTAGE（次のステージへ即座に進む）／BOSS（現在のステージのボスを即座に出現させる）／MUTEKI（無敵切り替え）ボタンが表示される。キーボードでは`N`/`B`/`I`
-- コード変更を検証する際は、`})();` の直前（IIFE末尾）に一時的な `if (DEBUG) { window.__t = { ... }; }` ブロックを追加し、内部状態のスナップショット取得（`snap()`）やボス撃破の強制（`boss.hp = -1`）、rAFのスロットリングを避けるための直接ティック（`update(dt); render();` をループで呼ぶ `tick(steps, dt)`）などを生やして Playwright から `window.__t.xxx()` を呼び出す、というのがこのプロジェクトで確立した検証手法
-  - headless Chromeではタブが非アクティブだと`requestAnimationFrame`が極端にスロットリングされることがあるため、時間を進めたい検証では`tick()`のような直接呼び出し用フックを使う
-  - 検証が終わったら**このフックは必ず削除してからコミットする**（`grep -n "__t"` で残っていないか確認する習慣）
-- ローカルのPlaywrightバイナリがNode 20以上を要求する一方、環境のシステムNodeが18系である場合があるため、`nodejs.org`からポータブルなNode 20を取得して使う運用実績がある
-- `node --check game.js` で構文エラーの有無を確認してからコミットする
+- `game.js`末尾の`if (DEBUG)`内で `window.__t` として**常設の検証API**が生える（後述）
+
+### 検証ハーネスの実行
+
+```
+node tools/verify.mjs             # 全シナリオ
+node tools/verify.mjs stages dive # 名前を指定
+node tools/verify.mjs --list      # シナリオ一覧
+```
+
+**Node 20以上が必要**（Playwrightの要件）。システムのNodeが18系の場合はポータブル版を使う。不足していればハーネスが取得手順つきで止まる。
+
+ハーネスは以下を自動でやるので、手作業の準備は不要:
+- Playwright本体の解決（通常の`import` → 見つからなければnpxキャッシュを走査）
+- Chromium実行ファイルの解決（`~/.cache/ms-playwright/chromium-*` から**最新を自動選択**。バージョン固定しない）
+- 静的サーバの起動（Nodeの`http`で自前に立てる。リポジトリルートを配信し、ポートはOS任せ。`python3 -m http.server`の配信ディレクトリ取り違え事故を構造的に防ぐ）
+- ブラウザ起動（iPhone 13相当の390x844）、`window.__t`の待機、ゲーム開始と無敵化、終了時の後片付け
+
+スクリーンショットは`.verify-shots/`（gitignore済み）に出力される。
+
+### 用意されているシナリオ
+
+| 名前 | 内容 |
+|---|---|
+| `smoke` | **通常モード**（`?debug=1`なし）で起動・プレイし、`pageerror`がゼロであること／`window.__t`が漏れていないことを表明 |
+| `stages` | ボス撃破による実際の遷移で1→5面を走破。各面のhazard・ボスの`kind`/`variant`、5面の連戦、最終撃破後の`ending`到達までを表明 |
+| `dive` | 4面→5面で潜航演出が重複しないこと（#100/#103の回帰）。本編の遷移とデバッグの`skipStage()`は別実装なので両方を個別に表明 |
+| `bosses` | 全ボスを順に出現させてスクリーンショット（見た目変更時の目視確認用） |
+| `hazards` | 各ステージのhazardを発生させ、実際に発生したことを表明したうえでスクリーンショット |
+
+### `window.__t` API
+
+`game.js`末尾の常設API。**アドホックにフックを足さず、足りない操作はここへ追加する**。
+
+- `snap()` — 内部状態のスナップショット（`state`/`currentStage`/`bossIndex`/`hazard`/`diveMode`/`boss`/各配列の件数など）。表明はこれを見て書く
+- `tick(steps, dt)` — `update(dt); render();` を直接回す。**headless Chromeでは非アクティブタブの`requestAnimationFrame`が極端にスロットリングされる**ため、時間を進めるときは必ずこれを使う
+- `start()` / `setInvincible(v)` / `killBoss()` / `spawnBossNow()` / `skipStage()` / `gotoStage(n)` / `setKillCount(n)` / `setDive(mode, depth)` / `activateHazard()`
+
+`gotoStage()`と`activateHazard()`は状態を直接書き換えるのではなく**実際の遷移・発生ロジックを通す**ようにしている（4面→5面の潜航引き継ぎのような分岐を検証で素通りさせないため）。
+
+### シナリオの追加
+
+`tools/verify.mjs`の`scenarios`オブジェクトに関数を足すだけ。`check(cond, msg)` / `check.equal(actual, expected, label)` で表明を書き、失敗は自動で集計されて exit 1 になる。共通の起動処理は`withGame()`が持っているので、シナリオ本体は表明に集中できる。
+
+### 注意
+
+- `node --check game.js` は**構文チェックのみ**で、意味的な退行は一切検出しない。自動で退行を捕捉できるのは`tools/verify.mjs`だけなので、コード変更時はこちらを流す
+- 新しく回帰を1件直したら、対応するシナリオに表明を1行足しておくと同じ退行を二度踏まない
 
 ---
 
