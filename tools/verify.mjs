@@ -137,6 +137,70 @@ const scenarios = {
     });
   },
 
+  // コンティニューは、どこで力尽きてもステージの最初からやり直すこと。
+  // 以前はボス戦から再開していたが、アイテムを失った状態でHP全快のボスに
+  // 挑むことになりまず勝てなかったため
+  continueFromStageStart: async (check) => {
+    // --- 3面のボス戦で力尽きた場合 ---
+    await withGame({ name: 'continue', check }, async (game) => {
+      await game.call('gotoStage', 3);
+      await game.call('spawnBossNow');
+      await game.tick(5);
+
+      const inBoss = await game.snap();
+      check.equal(inBoss.boss?.kind, 'ghostoctopus', '3面のボス戦に入っている');
+      const livesBefore = inBoss.continuesLeft;
+
+      await game.call('killPlayer');
+      await game.tick(3);
+      const dead = await game.snap();
+      check.equal(dead.state, 'continue', 'ライフ0でコンティニュー待ちになる');
+      await game.shot('continue-prompt');
+
+      await game.call('doContinue');
+      await game.tick(5);
+
+      const resumed = await game.snap();
+      check.equal(resumed.state, 'playing', 'コンティニューで再開できる');
+      check.equal(resumed.boss, null, 'ボス戦から再開しない（ステージ最初へ戻る）');
+      check.equal(resumed.currentStage, 3, '同じステージをやり直す');
+      check.equal(resumed.killCount, 0, '撃破数がリセットされる');
+      check.equal(resumed.midBossDone, false, '中ボスも出直す');
+      check.equal(resumed.continuesLeft, livesBefore - 1, 'コンティニュー回数が減る');
+      await game.shot('continue-resumed');
+    });
+
+    // --- 5面の連戦2体目（ゴブリンシャーク）で力尽きた場合 ---
+    await withGame({ name: 'continue-chain', check }, async (game) => {
+      await game.call('gotoStage', 5);
+      await game.call('setDive', 'deep', 2000);
+      await game.call('spawnBossNow');
+      await game.tick(5);
+      await game.call('killBoss');          // 1体目（強化イカ）を倒して連戦2体目へ
+      await game.tick(20);
+      await game.call('spawnBossNow');
+      await game.tick(5);
+
+      const chain = await game.snap();
+      check.equal(chain.boss?.kind, 'goblinshark', '連戦2体目に入っている');
+      check.equal(chain.bossIndex, 1, 'bossIndexが2体目を指している');
+
+      await game.call('killPlayer');
+      await game.tick(3);
+      await game.call('doContinue');
+      await game.tick(5);
+
+      const resumed = await game.snap();
+      check.equal(resumed.currentStage, 5, '5面をやり直す');
+      check.equal(resumed.bossIndex, 0, '連戦の1体目からやり直す');
+      check.equal(resumed.boss, null, 'ボス戦から再開しない');
+      check.equal(
+        resumed.diveMode, 'none',
+        '潜航ステージは穴くぐりからやり直す（アイテムを集め直す時間を確保する）'
+      );
+    });
+  },
+
   // 3面の中ボス「半魚人」。道中に挟まり、ステージ進行には関与しないこと
   midboss: async (check) => {
     await withGame({ name: 'midboss', check }, async (game) => {
