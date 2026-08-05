@@ -118,10 +118,17 @@ const scenarios = {
         '5面は深海の続きとして始まる（潜航演出をやり直さない）'
       );
 
-      // 猶予が明けると連戦1体目が自動で出現する
-      await game.tick(80);
+      // 5面は他のステージと同じく撃破数でボスが出る。
+      // 深海に着いただけでは（時間が経っても）出ないこと
+      await game.tick(120);
+      const idle = await game.snap();
+      check.equal(idle.boss, null, '5面に入った直後は時間が経ってもボスが出ない');
+
+      // 撃破数が閾値に達すると連戦1体目が出る
+      await game.call('setKillCount', 30);
+      await game.tick(10);
       const spawned = await game.snap();
-      check.equal(spawned.boss?.kind, 'squid', '5面1体目のボスが自動出現');
+      check.equal(spawned.boss?.kind, 'squid', '撃破数が閾値に達すると5面1体目が出現');
       check.equal(spawned.boss?.variant, 'enraged', '5面1体目は強化版');
     });
 
@@ -302,27 +309,53 @@ const scenarios = {
         await game.call('activateHazard');
 
         const before = await game.snap();
-        if (before.hazard === 'dive' || before.hazard === 'darkdive') {
-          // 潜航ステージは深海まで進めて天井が見える状態にする
+        if (before.hazard === 'darkdive') {
+          // 5面は深海に加えて熱水噴出孔（地形の山に乗る）も写したい。
+          // そのまま流すと撃破数が閾値に達してボスが出てしまうので、
+          // 撃破数を戻しながらスクロールし、噴出孔が画面に入るまで待つ
+          await game.call('setDive', 'deep', 2000);
+          for (let i = 0; i < 40; i++) {
+            await game.call('setKillCount', 14);
+            await game.tick(20);
+            if ((await game.snap()).counts.volcanoes > 0) break;
+          }
+        } else if (before.hazard === 'dive') {
+          // 4面は深海に着いた時点で天井が見えるので、ボスが出る前に撮る
           await game.call('setDive', 'deep', 2000);
           await game.tick(60);
         } else {
-          // 地形は110px/s、山の周期は700pxなので、20秒ぶん流して山を確実に画面へ入れる
-          await game.tick(400);
+          // 地形の障害は山に乗るので、画面に入るまでスクロールさせてから撮る
+          for (let i = 0; i < 40; i++) {
+            await game.tick(20);
+            const s = await game.snap();
+            if (s.counts.volcanoes > 0 || s.counts.wreckage > 0 || s.counts.whirlpools > 0) break;
+          }
         }
 
         const s = await game.snap();
         check.equal(s.currentStage, stage, `stage${stage} に到達`);
 
-        // hazardが本当に起きているか（スクリーンショットが空振りしていないか）
-        if (s.hazard === 'volcano') check(s.volcanoActive, 'stage1: 火山が発生していない');
-        if (s.hazard === 'wreckage') check(s.wreckageActive, 'stage3: 残骸が発生していない');
+        // hazardが本当に起きていて、かつ画面に写っているか
+        // （フラグだけ見ているとスクリーンショットが空振りでも通ってしまう）
+        if (s.hazard === 'volcano') {
+          check(s.volcanoActive, 'stage1: 火山が発生していない');
+          check(s.counts.volcanoes > 0, 'stage1: 火山が画面に写っていない');
+        }
+        if (s.hazard === 'wreckage') {
+          check(s.wreckageActive, 'stage3: 残骸が発生していない');
+          check(s.counts.wreckage > 0, 'stage3: 残骸が画面に写っていない');
+        }
         if (s.hazard === 'whirlpool') {
           check(s.whirlpoolActive, 'stage2: 渦が発生していない');
           check(s.counts.whirlpools > 0, 'stage2: 渦が画面に出ていない');
         }
         if (s.hazard === 'dive' || s.hazard === 'darkdive') {
           check.equal(s.diveMode, 'deep', `stage${stage}: 深海に到達していない`);
+        }
+        // 5面は潜航に加えて副次的な障害（深海の熱水噴出孔）を持つ
+        if (s.hazard === 'darkdive') {
+          check(s.volcanoActive, 'stage5: 深海の熱水噴出孔が発生していない');
+          check(s.counts.volcanoes > 0, 'stage5: 熱水噴出孔が画面に写っていない');
         }
 
         await game.shot(`stage${stage}-${s.hazard}`);
