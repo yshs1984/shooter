@@ -3413,6 +3413,31 @@
     ctx.restore();
   }
 
+  // drawBossのディスパッチから漏れたkind用の代替表示。
+  // 何も描かないと当たり判定だけあるボスになって不具合に気づけないので、
+  // 明らかにおかしい見た目を出して「描画関数を足し忘れている」と分かるようにする
+  function drawUnknownBossBody(R) {
+    ctx.fillStyle = '#ff00ff';
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.6, -R * 0.6);
+    ctx.lineTo(R * 0.6, R * 0.6);
+    ctx.moveTo(R * 0.6, -R * 0.6);
+    ctx.lineTo(-R * 0.6, R * 0.6);
+    ctx.stroke();
+
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('NO ART', 0, R * 0.35);
+    ctx.textAlign = 'left';
+  }
+
   // 半魚人。魚の頭に人型の胴と腕、脚はひれ。手に銛を持つ（前方＝左を向いている）
   function drawMermanBossBody(R) {
     const skin = '#3f7d63';
@@ -4038,6 +4063,9 @@
       if (boss.chargePhase === 'back') ctx.scale(-1, 1);
       drawGoblinSharkBossBody(R);
     }
+    // 描画関数を足し忘れると「当たり判定だけある見えないボス」になって
+    // 静かに壊れるので、代わりに目立つ姿を出して気づけるようにする
+    else drawUnknownBossBody(R);
 
     ctx.restore();
     if (boss.kind === 'merman' && boss.harpoonPhase === 'throw') drawMermanHarpoon();

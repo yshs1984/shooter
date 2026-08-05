@@ -68,7 +68,7 @@ const STAGES = [
 - `boss.variant`（`'normal'` | `'enraged'`）は同じ`kind`の強化版を表す汎用フィールド。`updateBoss()`/`draw<Kind>BossBody`内で分岐に使う
 - ボス戦中も雑魚敵が間引かれて出現し（`BOSS_FIGHT_EXCLUDED`, `BOSS_FIGHT_SPAWN_INTERVAL`）、アイテムドロップ率が上がる（`ITEM_DROP_CHANCE_BOSS`）。これは`boss`の有無だけを見た汎用ロジックなので、新ボス追加時に個別対応不要
 - ボス戦中は`bossArenaScale()`により海底・天井（深海の場合）が退いて（`BOSS_ARENA_FLATTEN`=0.45倍）圧迫事故を減らす
-- **`drawBoss()`のディスパッチにはフォールバックの`else`が無い**。新しい`kind`を足すときに描画関数の追加を忘れると、当たり判定はあるのに何も表示されないボスになる
+- **`drawBoss()`のディスパッチから漏れた`kind`は、マゼンタの丸に「NO ART」と描かれる**（`drawUnknownBossBody`）。以前はフォールバックが無く、描画関数の追加を忘れると「当たり判定だけあって何も見えないボス」になって静かに壊れていた。スクリーンショットを撮る検証シナリオはあるが画像の中身までは検証していないため、テストで守るのではなく**失敗を目立たせる**形にしてある
 
 ### 中ボス（`boss.isMid`）
 
