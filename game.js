@@ -171,13 +171,15 @@
   // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
   // bosses: そのステージで戦うボスの並び（通常1体。連戦ステージは複数）
   // midBoss: 道中に挟まる中ボス（任意。無いステージでは未定義のまま）
+  // subHazard: 潜航ステージ用。hazardが潜航に取られているぶん、道中の障害をこちらで持つ
   const STAGES = [
     { hazard: 'volcano',   bosses: [{ kind: 'mantis',       hp: 75,  score: 650 }] },
     { hazard: 'whirlpool', bosses: [{ kind: 'crab',         hp: 90,  score: 800 }] },
     { hazard: 'wreckage',  midBoss: { kind: 'merman', hp: 45, score: 400 },
                            bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
     { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] },
-    { hazard: 'darkdive',  bosses: [
+    { hazard: 'darkdive',  subHazard: 'volcano',   // 深海の熱水噴出孔
+                           bosses: [
         { kind: 'squid',       hp: 130, score: 900,  variant: 'enraged' },
         { kind: 'goblinshark', hp: 140, score: 1200 }
       ] }
@@ -324,7 +326,6 @@
       if (prevHazard === 'dive' && nextHazard === 'darkdive') {
         diveMode = 'deep';
         diveDepth = DIVE_BOTTOM_DEPTH;
-        deepTimer = DEEP_BOSS_DELAY;
       } else {
         resetDive();
       }
@@ -2421,13 +2422,21 @@
       } else if (!volcanoActive && killCount >= VOLCANO_TRIGGER_KILLS) {
         volcanoActive = true;
       }
+
+      // 潜航ステージは hazard が潜航に取られているので、道中の障害は subHazard で持つ
+      const subHazard = STAGES[currentStage - 1].subHazard;
+      if (subHazard === 'volcano' && !volcanoActive && killCount >= VOLCANO_TRIGGER_KILLS) {
+        volcanoActive = true;
+      }
+
       updateVolcanoes(dt);
       updateWhirlpools(dt);
       updateWreckage(dt);
 
-      // 潜航ステージでは撃破数ではなく、縦穴を抜けて深海を少し進むとボスが現れる
+      // 4面は縦穴を抜けて深海を少し進むとボスが現れる（長い潜航が道中の代わりになる）。
+      // 5面は4面から深海を引き継いで始まり潜航しないので、他のステージと同じく撃破数で出す
       const midDef = STAGES[currentStage - 1].midBoss;
-      if (hazard === 'dive' || hazard === 'darkdive') {
+      if (hazard === 'dive') {
         if (diveMode === 'deep' && deepTimer <= 0) {
           spawnBoss();
         }
@@ -2560,11 +2569,7 @@
             resetVolcanoes();
             resetWhirlpools();
             // 4面→5面は同じ深海の続きなので、穴くぐりの潜航演出をやり直さない
-            if (prevHazard === 'dive' && nextHazard === 'darkdive') {
-              deepTimer = DEEP_BOSS_DELAY;
-            } else {
-              resetDive();
-            }
+            if (!(prevHazard === 'dive' && nextHazard === 'darkdive')) resetDive();
             resetWreckage();
             spawnTimer = Math.max(spawnTimer, 1.2);
             stageBannerTimer = 2.2;
@@ -4931,7 +4936,10 @@
         counts: {
           enemies: enemies.length, enemyBullets: enemyBullets.length,
           playerBullets: playerBullets.length, items: items.length,
-          escorts: escorts.length, whirlpools: whirlpools.length
+          escorts: escorts.length, whirlpools: whirlpools.length,
+          // 画面に写っている地形上の障害。フラグが立っているだけでなく
+          // 実際に見えているかを検証側から判定できるようにする
+          volcanoes: visibleVolcanoes().length, wreckage: visibleWreckage().length
         }
       }),
 

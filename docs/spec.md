@@ -35,7 +35,8 @@ const STAGES = [
   { hazard: 'wreckage',  midBoss: { kind: 'merman', hp: 45, score: 400 },
                          bosses: [{ kind: 'ghostoctopus', hp: 110, score: 950 }] },
   { hazard: 'dive',      bosses: [{ kind: 'squid',        hp: 95,  score: 800 }] },
-  { hazard: 'darkdive',  bosses: [
+  { hazard: 'darkdive',  subHazard: 'volcano',   // 深海の熱水噴出孔
+                         bosses: [
       { kind: 'squid',       hp: 130, score: 900,  variant: 'enraged' },
       { kind: 'goblinshark', hp: 140, score: 1200 }
     ] }
@@ -44,10 +45,11 @@ const STAGES = [
 
 - `currentStage`（1始まり）と `bossIndex`（同ステージ内で何体目のボスと戦っているか、連戦用）で現在地を管理
 - ボス撃破時、`bossIndex + 1 < stageBosses.length` なら同ステージ内の次のボスへ（`bossIndex += 1`、「NEXT BOSS」バナー）。そうでなければ `currentStage += 1` して次ステージへ
-- 4面(`dive`)→5面(`darkdive`)の遷移だけは特別扱い: 両方とも潜航ロジック（`updateDive`）を共有するステージなので、`resetDive()` を呼ばず `diveMode` を `'deep'` のまま維持し、`deepTimer` だけ `DEEP_BOSS_DELAY` にリセットする（穴くぐりの潜航演出を繰り返さないため）。それ以外のステージ遷移は `resetDive()` で潜航状態を初期化する
+- 4面(`dive`)→5面(`darkdive`)の遷移だけは特別扱い: 両方とも潜航ロジック（`updateDive`）を共有するステージなので、`resetDive()` を呼ばず `diveMode` を `'deep'` のまま維持する（穴くぐりの潜航演出を繰り返さないため）。それ以外のステージ遷移は `resetDive()` で潜航状態を初期化する
 - `debugSkipStage()`（デバッグのSTAGEボタン）も本編のボス撃破遷移と同じ4面→5面特別扱いロジックを持つ（別実装なので変更時は両方直すこと）
 - `STAGE_ENEMY_WEIGHTS`（雑魚敵の出現重みテーブル）は `STAGES` とは別配列で、ステージ数と同じ5要素
 - `midBoss` は任意。定義があるステージだけ、撃破数が `MIDBOSS_KILL_THRESHOLD`(22) に達したときに道中の中ボスが出る（詳細は次章）
+- `subHazard` も任意。潜航ステージは `hazard` が潜航に取られているため、道中の障害をこちらで持つ。hazardのディスパッチとは独立した判定で、`VOLCANO_TRIGGER_KILLS`(14) に達すると `volcanoActive` を立てる。5面が該当（深海の熱水噴出孔）
 - `midBossDone`（そのステージで中ボスを出したか）は、**`killCount = 0` を行っている箇所すべてで一緒にリセットする**。現在は `startGame()` / `continueGame()`のステージ再開側 / ボス撃破によるステージ進行 / `debugSkipStage()` の4箇所
 
 ---
@@ -126,7 +128,8 @@ const STAGES = [
 - **`volcano`**: 海底の山（`mountainAt()`）の一部が火山になる（`isVolcano`フラグ、`VOLCANO_MOUNTAIN_CHANCE`=0.9）。撃破数`VOLCANO_TRIGGER_KILLS`(14)で発生、山頂から不規則にマグマを発射
 - **`whirlpool`**: 撃破数`WHIRLPOOL_TRIGGER_KILLS`(14)で発生。画面右から渦が次々流れてきて、入ると操作を奪われ内壁を回りながら引きずり込まれる
 - **`wreckage`**: 山の一部が沈没船残骸になる（`isWreckage`フラグ、`WRECKAGE_MOUNTAIN_CHANCE`=0.85）。撃破数`WRECKAGE_TRIGGER_KILLS`(14)で発生。残骸の見た目は3種類（船体片`drawWreckageHullPlate`／マスト`drawWreckageMast`／肋材+錨`drawWreckageRibs`）を`periodIndex`ごとに決定的に振り分け
-- **`dive` / `darkdive`**: 共通で`updateDive(dt)`を呼ぶ。撃破数`DIVE_TRIGGER_KILLS`(14)で大穴(`THE ABYSS`)が接近→`diveMode`が `'none' → 'opening' → 'diving'（縦スクロール、左右に岩壁`collidesCave`） → 'deep'（横スクロール復帰、`SEA FLOOR`）` と遷移。深度`DIVE_BOTTOM_DEPTH`(2000)まで潜ると`'deep'`になり、`DEEP_BOSS_DELAY`(3.2秒)後にボス出現。`diveMode==='deep'`のときは海底(`drawTerrain`/`collidesTerrain`)に加えて天井(`drawCeiling`/`collidesCeiling`)もあり、上下から挟まれる構造
+- **`dive` / `darkdive`**: 共通で`updateDive(dt)`を呼ぶ。撃破数`DIVE_TRIGGER_KILLS`(14)で大穴(`THE ABYSS`)が接近→`diveMode`が `'none' → 'opening' → 'diving'（縦スクロール、左右に岩壁`collidesCave`） → 'deep'（横スクロール復帰、`SEA FLOOR`）` と遷移。深度`DIVE_BOTTOM_DEPTH`(2000)まで潜ると`'deep'`になる。`diveMode==='deep'`のときは海底(`drawTerrain`/`collidesTerrain`)に加えて天井(`drawCeiling`/`collidesCeiling`)もあり、上下から挟まれる構造
+  - **ボスの出現条件が4面と5面で異なる**。4面(`dive`)は`deepTimer`（深海到達から`DEEP_BOSS_DELAY`=3.2秒）で出す。長い潜航そのものが道中の代わりになっているため。5面(`darkdive`)は4面から深海を引き継いで始まり潜航しないので、他のステージと同じく`killCount >= BOSS_KILL_THRESHOLD`(30)で出す（`deepTimer`は読まない）
 - 明るさは`drawDepthDarkness()`が担当（`diveMode==='deep'`なら暗さの上限0.5、それ以外の潜航中は0.72、`diveDepth`に応じて徐々に暗くなる）。5面専用の特別な暗闇演出は過去に実装したが、ボス戦が暗すぎて戦えなくなるため撤去済み（4面と同じ扱いに統一）
 
 ---
@@ -169,11 +172,11 @@ node tools/verify.mjs --list      # シナリオ一覧
 |---|---|
 | `smoke` | **通常モード**（`?debug=1`なし）で起動・プレイし、`pageerror`がゼロであること／`window.__t`が漏れていないことを表明 |
 | `stages` | ボス撃破による実際の遷移で1→5面を走破。各面のhazard・ボスの`kind`/`variant`、5面の連戦、最終撃破後の`ending`到達までを表明 |
-| `dive` | 4面→5面で潜航演出が重複しないこと（#100/#103の回帰）。本編の遷移とデバッグの`skipStage()`は別実装なので両方を個別に表明 |
+| `dive` | 4面→5面で潜航演出が重複しないこと（#100/#103の回帰）。本編の遷移とデバッグの`skipStage()`は別実装なので両方を個別に表明。5面が撃破数でボスを出す（深海に着いただけでは出ない）ことも表明 |
 | `midboss` | 3面の中ボス（半魚人）が出現・撃破でき、ステージ進行に関与しないこと。確定ドロップと撃破数の巻き戻しも表明。中ボスを持たない1面では出現しないことも確認 |
 | `continueFromStageStart` | ボス戦で力尽きてコンティニューしても、ボス戦からではなくステージの最初から再開すること。5面の連戦2体目で力尽きた場合に`bossIndex`が1体目へ戻ること、潜航ステージが穴くぐりからやり直しになることも表明 |
 | `bosses` | 全ボスを順に出現させてスクリーンショット（見た目変更時の目視確認用） |
-| `hazards` | 各ステージのhazardを発生させ、実際に発生したことを表明したうえでスクリーンショット |
+| `hazards` | 各ステージのhazardを発生させ、フラグが立つだけでなく**画面に写っている**こと（`counts.volcanoes`/`wreckage`/`whirlpools`）まで表明したうえでスクリーンショット。5面の熱水噴出孔も確認 |
 
 ### `window.__t` API
 
