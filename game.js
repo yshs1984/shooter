@@ -166,7 +166,6 @@
   let continuesLeft = CONTINUE_MAX;
   let totalKills = 0;   // エンディングで見せる通算撃破数
   let endingT = 0;      // エンディング演出の経過秒
-  let checkpointAtBoss = false;
 
   // ---------- 面構成 ----------
   // hazard: そのステージで発生する障害の種類('volcano'|'whirlpool'|'dive')
@@ -1594,15 +1593,12 @@
   }
 
   function spawnBoss() {
-    // ここ以降に力尽きたらボス戦から再開する
-    checkpointAtBoss = true;
     SFX.bossAppear();
     boss = makeBoss(STAGES[currentStage - 1].bosses[bossIndex], false);
     clearFieldForBoss();
   }
 
-  // 道中に挟まる中ボス。checkpointAtBossは立てないので、
-  // ここで力尽きたらステージの最初からやり直しになる
+  // 道中に挟まる中ボス。撃破してもステージ進行には関与しない
   function spawnMidBoss() {
     SFX.bossAppear();
     boss = makeBoss(STAGES[currentStage - 1].midBoss, true);
@@ -2239,7 +2235,9 @@
     ctx.restore();
   }
 
-  // コンティニュー。ボス戦で力尽きたならボス戦から、そうでなければそのステージの最初から
+  // コンティニュー。どこで力尽きてもそのステージの最初からやり直す。
+  // 再開時はアイテムの効果を失う（resetPlayer）ので、ボス戦から再開させると
+  // 素の武器でHP全快のボスに挑むことになり、まず勝てないため
   function continueGame() {
     if (continuesLeft <= 0) return;
     continuesLeft -= 1;
@@ -2248,23 +2246,15 @@
     clearField();
     resetPlayer();
 
-    if (checkpointAtBoss) {
-      // ボスを出し直す（ステージ3の潜航後なら深海の横スクロールのまま再戦）
-      stageBannerTimer = 2.0;
-      stageBannerText = 'BOSS BATTLE';
-      spawnBoss();
-    } else {
-      // ステージの最初からやり直す
-      killCount = 0;
-      midBossDone = false;
-      bossIndex = 0;
-      resetVolcanoes();
-      resetWhirlpools();
-      resetDive();
-      resetWreckage();
-      stageBannerTimer = 2.2;
-      stageBannerText = `STAGE ${currentStage}`;
-    }
+    killCount = 0;
+    midBossDone = false;
+    bossIndex = 0;
+    resetVolcanoes();
+    resetWhirlpools();
+    resetDive();
+    resetWreckage();
+    stageBannerTimer = 2.2;
+    stageBannerText = `STAGE ${currentStage}`;
   }
 
   // ---------- ゲーム開始/更新 ----------
@@ -2274,7 +2264,6 @@
     newRecord = false;
     lives = 3;
     continuesLeft = CONTINUE_MAX;
-    checkpointAtBoss = false;
     bossIndex = 0;
     totalKills = 0;
     endingT = 0;
@@ -2555,15 +2544,12 @@
         boss = null;
         SFX.bossDown();
         if (bossIndex + 1 < stageBosses.length) {
-          // 同じステージ内に次のボスが控えている（連戦）。
-          // checkpointAtBossはtrueのまま維持し、コンティニュー時は連戦の1体目から再開する
+          // 同じステージ内に次のボスが控えている（連戦）
           bossIndex += 1;
           stageBannerTimer = 2.2;
           stageBannerText = 'NEXT BOSS';
           SFX.stage();
         } else {
-          // ボスを倒したので、次に力尽きたときはステージ最初からに戻す
-          checkpointAtBoss = false;
           bossIndex = 0;
           if (currentStage < STAGES.length) {
             const prevHazard = STAGES[currentStage - 1].hazard;
@@ -4885,7 +4871,7 @@
         { text: 'CONTINUE?', font: 'bold 26px sans-serif' },
         { text: `のこり ${continuesLeft}回`, font: '18px sans-serif' },
         {
-          text: checkpointAtBoss ? 'タップでボス戦から再開' : `タップでステージ${currentStage}の最初から再開`,
+          text: `タップでステージ${currentStage}の最初から再開`,
           font: '15px sans-serif'
         }
       ]);
@@ -4928,7 +4914,7 @@
     window.__t = {
       // 内部状態のスナップショット。Playwright側はこれを見て表明を書く
       snap: () => ({
-        state, currentStage, bossIndex, killCount, score, lives, continuesLeft,
+        state, currentStage, bossIndex, killCount, score, lives, continuesLeft, midBossDone,
         hazard: STAGES[currentStage - 1] ? STAGES[currentStage - 1].hazard : null,
         diveMode, diveDepth, deepTimer,
         volcanoActive, wreckageActive, whirlpoolActive,
@@ -4972,6 +4958,20 @@
       },
 
       setKillCount: (n) => { killCount = n; },
+
+      // 自機を撃墜する。無敵・バリアを外したうえで実際のhitPlayer()を通すので、
+      // ライフ0からコンティニュー待ちへ入る本物の経路を検証できる
+      killPlayer: () => {
+        debugInvincible = false;
+        player.shieldHp = 0;
+        while (lives > 0 && state === STATE_PLAYING) {
+          player.invuln = 0;
+          hitPlayer();
+        }
+      },
+      // コンティニュー待ちの画面から実際に再開する
+      doContinue: () => { continueGame(); },
+
       setDive: (mode, depth) => {
         diveMode = mode;
         diveDepth = depth === undefined ? diveDepth : depth;
