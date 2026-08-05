@@ -137,6 +137,77 @@ const scenarios = {
     });
   },
 
+  // 3面の中ボス「半魚人」。道中に挟まり、ステージ進行には関与しないこと
+  midboss: async (check) => {
+    await withGame({ name: 'midboss', check }, async (game) => {
+      await game.call('gotoStage', 3);
+
+      // 撃破数が中ボスの閾値に達すると出現する
+      await game.call('setKillCount', 22);
+      await game.tick(10);
+      const mid = await game.snap();
+      check.equal(mid.currentStage, 3, '3面にいる');
+      check.equal(mid.boss?.kind, 'merman', '中ボスとして半魚人が出現');
+      check.equal(mid.boss?.isMid, true, '中ボスとして扱われている');
+      await game.shot('merman');
+
+      // 銛の構えと、投擲の伸びきったところをそれぞれ撮る
+      let sawAim = false;
+      let sawThrow = false;
+      for (let i = 0; i < 200 && !sawThrow; i++) {
+        await game.tick(1);
+        const s = await game.snap();
+        if (!sawAim && s.boss?.harpoonPhase === 'aim') {
+          sawAim = true;
+          await game.shot('harpoon-aim');
+        }
+        if (s.boss?.harpoonPhase === 'throw') {
+          // 投げ始めは手元にあるので、伸びきるあたりまで進めてから撮る
+          await game.tick(9);
+          const mid = await game.snap();
+          if (mid.boss?.harpoonPhase === 'throw') {
+            sawThrow = true;
+            await game.shot('harpoon-throw');
+          }
+        }
+      }
+      check(sawAim, '銛の構え(harpoonPhase=aim)が発生する');
+      check(sawThrow, '銛の投擲(harpoonPhase=throw)が発生する');
+
+      // 中ボス戦の最中も雑魚が出るので撃破数は伸びる。ステージボスの閾値を
+      // 超えた状態で中ボスを倒しても、ステージボスが即出現しないことを確かめる
+      await game.call('setKillCount', 31);
+      const beforeItems = (await game.snap()).counts.items;
+      await game.call('killBoss');
+      await game.tick(20);
+
+      const after = await game.snap();
+      check.equal(after.boss, null, '中ボス撃破直後にステージボスが即出現しない');
+      check.equal(after.currentStage, 3, '中ボス撃破ではステージが進まない');
+      check(after.counts.items > beforeItems, '中ボス撃破でアイテムが確定ドロップする');
+      check(
+        after.killCount < 30,
+        `撃破数が巻き戻る（実際: ${after.killCount}）`
+      );
+
+      // そのあと撃破数が伸びればステージボスが出る
+      await game.call('setKillCount', 30);
+      await game.tick(10);
+      const stageBoss = await game.snap();
+      check.equal(stageBoss.boss?.kind, 'ghostoctopus', '中ボスの後にステージボスが出現');
+      check.equal(stageBoss.boss?.isMid, false, 'ステージボスは中ボス扱いではない');
+    });
+
+    // 中ボスを持たないステージには出現しないこと
+    await withGame({ name: 'midboss-absent', check }, async (game) => {
+      await game.call('setKillCount', 22);
+      await game.tick(10);
+      const s = await game.snap();
+      check.equal(s.currentStage, 1, '1面にいる');
+      check.equal(s.boss, null, '中ボスを持たない1面では出現しない');
+    });
+  },
+
   // 全ボスを順に出現させてスクリーンショットを撮る（見た目変更時の目視確認用）
   bosses: async (check) => {
     await withGame({ name: 'boss', check }, async (game) => {
