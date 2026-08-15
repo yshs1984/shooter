@@ -319,16 +319,8 @@
     bossIndex = 0;
     spawnTimer = Math.max(spawnTimer, 1.2);
     if (currentStage < STAGES.length) {
-      const prevHazard = STAGES[currentStage - 1].hazard;
       currentStage += 1;
-      const nextHazard = STAGES[currentStage - 1].hazard;
-      // 4面→5面は同じ深海の続きなので、穴くぐりの潜航演出をやり直さない（本編の遷移と同じ扱い）
-      if (prevHazard === 'dive' && nextHazard === 'darkdive') {
-        diveMode = 'deep';
-        diveDepth = DIVE_BOTTOM_DEPTH;
-      } else {
-        resetDive();
-      }
+      resetDiveForStage();
       stageBannerTimer = 2.2;
       stageBannerText = `STAGE ${currentStage}`;
     } else {
@@ -1441,6 +1433,21 @@
     deepTimer = 0;
   }
 
+  // 現在のステージを最初から始めるときの潜航状態にする。
+  // 5面は4面の深海をそのまま引き継ぐステージなので「最初」が深海であり、
+  // 穴くぐりからやり直さない。ステージ遷移・コンティニュー・デバッグの
+  // ステージスキップで同じ判断が要るため、ここに集約している
+  function resetDiveForStage() {
+    if (STAGES[currentStage - 1].hazard === 'darkdive') {
+      diveMode = 'deep';
+      diveDepth = DIVE_BOTTOM_DEPTH;
+      diveHole = null;
+      deepTimer = 0;
+    } else {
+      resetDive();
+    }
+  }
+
   function updateDive(dt) {
     if (diveMode === 'none') {
       if (killCount >= DIVE_TRIGGER_KILLS) {
@@ -2252,7 +2259,7 @@
     bossIndex = 0;
     resetVolcanoes();
     resetWhirlpools();
-    resetDive();
+    resetDiveForStage();
     resetWreckage();
     stageBannerTimer = 2.2;
     stageBannerText = `STAGE ${currentStage}`;
@@ -2443,7 +2450,8 @@
       } else if (midDef && !midBossDone && killCount >= MIDBOSS_KILL_THRESHOLD) {
         // ステージボスより手前の撃破数なので、中ボスのほうが必ず先に出る
         spawnMidBoss();
-      } else if (killCount >= BOSS_KILL_THRESHOLD) {
+      } else if (killCount >= BOSS_KILL_THRESHOLD && diveMode !== 'diving') {
+        // ボスは横スクロール用の動きしか持たないので、縦穴を降りている間は出さない
         spawnBoss();
       }
     } else {
@@ -2561,15 +2569,12 @@
         } else {
           bossIndex = 0;
           if (currentStage < STAGES.length) {
-            const prevHazard = STAGES[currentStage - 1].hazard;
             currentStage += 1;
-            const nextHazard = STAGES[currentStage - 1].hazard;
             killCount = 0;
             midBossDone = false;
             resetVolcanoes();
             resetWhirlpools();
-            // 4面→5面は同じ深海の続きなので、穴くぐりの潜航演出をやり直さない
-            if (!(prevHazard === 'dive' && nextHazard === 'darkdive')) resetDive();
+            resetDiveForStage();
             resetWreckage();
             spawnTimer = Math.max(spawnTimer, 1.2);
             stageBannerTimer = 2.2;
