@@ -45,8 +45,9 @@ const STAGES = [
 
 - `currentStage`（1始まり）と `bossIndex`（同ステージ内で何体目のボスと戦っているか、連戦用）で現在地を管理
 - ボス撃破時、`bossIndex + 1 < stageBosses.length` なら同ステージ内の次のボスへ（`bossIndex += 1`、「NEXT BOSS」バナー）。そうでなければ `currentStage += 1` して次ステージへ
-- 4面(`dive`)→5面(`darkdive`)の遷移だけは特別扱い: 両方とも潜航ロジック（`updateDive`）を共有するステージなので、`resetDive()` を呼ばず `diveMode` を `'deep'` のまま維持する（穴くぐりの潜航演出を繰り返さないため）。それ以外のステージ遷移は `resetDive()` で潜航状態を初期化する
-- `debugSkipStage()`（デバッグのSTAGEボタン）も本編のボス撃破遷移と同じ4面→5面特別扱いロジックを持つ（別実装なので変更時は両方直すこと）
+- **そのステージを最初から始めるときの潜航状態は `resetDiveForStage()` に集約している**。5面(`darkdive`)は4面の深海をそのまま引き継ぐステージなので「最初」が深海であり、`diveMode='deep'` にする。それ以外は `resetDive()` で `'none'` に戻す
+  - ステージ遷移・コンティニュー・`debugSkipStage()` の3経路すべてがこれを呼ぶ。以前は経路ごとに「4面→5面なら特別扱い」を個別に書いており、コンティニュー経路だけ漏れていたために**5面で再開すると既に海底にいるのにもう一度潜る**不具合になっていた（#111）
+- `startGame()` だけは `currentStage = 1` の代入より前に潜航をリセットしているため、素の `resetDive()` を呼ぶ（新規ゲームは必ず1面から始まるので問題ない）
 - `STAGE_ENEMY_WEIGHTS`（雑魚敵の出現重みテーブル）は `STAGES` とは別配列で、ステージ数と同じ5要素
 - `midBoss` は任意。定義があるステージだけ、撃破数が `MIDBOSS_KILL_THRESHOLD`(22) に達したときに道中の中ボスが出る（詳細は次章）
 - `subHazard` も任意。潜航ステージは `hazard` が潜航に取られているため、道中の障害をこちらで持つ。hazardのディスパッチとは独立した判定で、`VOLCANO_TRIGGER_KILLS`(14) に達すると `volcanoActive` を立てる。5面が該当（深海の熱水噴出孔）
@@ -130,6 +131,7 @@ const STAGES = [
 - **`wreckage`**: 山の一部が沈没船残骸になる（`isWreckage`フラグ、`WRECKAGE_MOUNTAIN_CHANCE`=0.85）。撃破数`WRECKAGE_TRIGGER_KILLS`(14)で発生。残骸の見た目は3種類（船体片`drawWreckageHullPlate`／マスト`drawWreckageMast`／肋材+錨`drawWreckageRibs`）を`periodIndex`ごとに決定的に振り分け
 - **`dive` / `darkdive`**: 共通で`updateDive(dt)`を呼ぶ。撃破数`DIVE_TRIGGER_KILLS`(14)で大穴(`THE ABYSS`)が接近→`diveMode`が `'none' → 'opening' → 'diving'（縦スクロール、左右に岩壁`collidesCave`） → 'deep'（横スクロール復帰、`SEA FLOOR`）` と遷移。深度`DIVE_BOTTOM_DEPTH`(2000)まで潜ると`'deep'`になる。`diveMode==='deep'`のときは海底(`drawTerrain`/`collidesTerrain`)に加えて天井(`drawCeiling`/`collidesCeiling`)もあり、上下から挟まれる構造
   - **ボスの出現条件が4面と5面で異なる**。4面(`dive`)は`deepTimer`（深海到達から`DEEP_BOSS_DELAY`=3.2秒）で出す。長い潜航そのものが道中の代わりになっているため。5面(`darkdive`)は4面から深海を引き継いで始まり潜航しないので、他のステージと同じく`killCount >= BOSS_KILL_THRESHOLD`(30)で出す（`deepTimer`は読まない）
+  - 撃破数で出す側には `diveMode !== 'diving'` のガードが付いている。ボスは横スクロール用の動きしか持たないので、万一縦穴を降りている最中に閾値へ達しても洞窟の中に湧かないようにするため
 - 明るさは`drawDepthDarkness()`が担当（`diveMode==='deep'`なら暗さの上限0.5、それ以外の潜航中は0.72、`diveDepth`に応じて徐々に暗くなる）。5面専用の特別な暗闇演出は過去に実装したが、ボス戦が暗すぎて戦えなくなるため撤去済み（4面と同じ扱いに統一）
 
 ---

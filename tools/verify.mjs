@@ -142,6 +142,22 @@ const scenarios = {
         'スキップでも5面は深海から始まる（潜航演出をやり直さない）'
       );
     });
+
+    // --- 縦穴を降りている最中にボスを出さないこと（#111）---
+    // ボスは横スクロール用の動きしか持たないので、潜航中に出ると破綻する。
+    // 撃破数でボスを出すのは5面(darkdive)なので、4面ではなく5面で確かめる必要がある
+    // （4面はdeepTimer経路なので、このガードを通らない）
+    await withGame({ name: 'dive-noboss', check }, async (game) => {
+      await game.call('gotoStage', 5);
+      await game.call('setDive', 'diving', 500);
+      await game.call('setKillCount', 30);   // ステージボスの閾値を超えた状態にする
+      await game.tick(30);
+
+      const s = await game.snap();
+      check.equal(s.hazard, 'darkdive', '撃破数でボスが出るステージで確かめている');
+      check.equal(s.diveMode, 'diving', '潜航中のままである');
+      check.equal(s.boss, null, '潜航中は撃破数が閾値を超えてもボスが出ない');
+    });
   },
 
   // コンティニューは、どこで力尽きてもステージの最初からやり直すこと。
@@ -201,10 +217,14 @@ const scenarios = {
       check.equal(resumed.currentStage, 5, '5面をやり直す');
       check.equal(resumed.bossIndex, 0, '連戦の1体目からやり直す');
       check.equal(resumed.boss, null, 'ボス戦から再開しない');
+      // 5面は4面の深海を引き継ぐステージなので「最初」が深海。
+      // 穴くぐりからやり直すと、既に海底にいるのにまた潜ることになってしまう（#111）
       check.equal(
-        resumed.diveMode, 'none',
-        '潜航ステージは穴くぐりからやり直す（アイテムを集め直す時間を確保する）'
+        resumed.diveMode, 'deep',
+        '5面の再開は深海から（穴くぐりをやり直さない）'
       );
+      // ボスは撃破数で出るので、深海から再開しても集め直す時間はある
+      check(resumed.killCount < 30, '撃破数がリセットされ、すぐにボスは出ない');
     });
   },
 
